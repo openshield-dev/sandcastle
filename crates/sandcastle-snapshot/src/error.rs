@@ -5,17 +5,23 @@ use thiserror::Error;
 /// Errors produced by the snapshot layer.
 #[derive(Error, Debug)]
 pub enum SnapshotError {
-    #[error("snapshot not found: {0}")]
+    #[error("Snapshot not found: {0}")]
     NotFound(String),
 
-    #[error("failed to create snapshot: {0}")]
-    CreateFailed(String),
+    #[error("Snapshot already exists: {0}")]
+    AlreadyExists(String),
 
-    #[error("failed to restore snapshot: {0}")]
+    #[error("Branch not found: {0}")]
+    BranchNotFound(String),
+
+    #[error("Restore failed: {0}")]
     RestoreFailed(String),
 
-    #[error("snapshot manifest is corrupt: {0}")]
-    CorruptManifest(String),
+    #[error("Snapshot corrupted: {0}")]
+    Corrupted(String),
+
+    #[error("Storage error: {0}")]
+    StorageError(String),
 
     #[error(transparent)]
     Io(#[from] std::io::Error),

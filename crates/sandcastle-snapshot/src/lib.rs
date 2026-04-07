@@ -1,9 +1,17 @@
 //! Sandbox state snapshot, restore, and checkpoint management for SandCastle.
 //!
-//! Stub implementation — full snapshot support will be added in a subsequent milestone.
+//! Provides CoW snapshots, branching, restoration, and diffing for sandboxed
+//! environments. Snapshots are stored as directory copies on disk with a JSON
+//! index for fast lookup.
 
-/// Snapshot configuration (stub)
-#[derive(Debug, Clone, Default)]
-pub struct SnapshotConfig {
-    pub enabled: bool,
-}
+pub mod error;
+pub mod snapshot;
+pub mod store;
+pub mod branch;
+pub mod diff;
+
+pub use error::SnapshotError;
+pub use snapshot::{Snapshot, SnapshotMetadata};
+pub use store::SnapshotStore;
+pub use branch::BranchManager;
+pub use diff::{SnapshotDiff, DiffEntry, DiffType};
