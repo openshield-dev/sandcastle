@@ -1,0 +1,17 @@
+[package]
+name = "sandcastle-network"
+version = "0.1.0"
+edition.workspace = true
+description = "Network isolation, egress filtering, and DNS control for SandCastle sandboxes"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+sandcastle-policy = { path = "../sandcastle-policy" }
+sandcastle-audit = { path = "../sandcastle-audit" }
+hickory-resolver = "0.24"
+reqwest = { version = "0.12", features = ["rustls-tls"] }

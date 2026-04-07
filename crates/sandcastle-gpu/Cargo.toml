@@ -1,0 +1,13 @@
+[package]
+name = "sandcastle-gpu"
+version = "0.1.0"
+edition.workspace = true
+description = "GPU resource isolation and quota enforcement for AI agent sandboxes"
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+sandcastle-policy = { path = "../sandcastle-policy" }
+sandcastle-audit = { path = "../sandcastle-audit" }

@@ -1,0 +1,14 @@
+[package]
+name = "sandcastle-audit"
+version = "0.1.0"
+edition.workspace = true
+description = "Structured audit logging and event recording for all SandCastle sandbox operations"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }

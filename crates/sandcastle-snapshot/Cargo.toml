@@ -1,0 +1,17 @@
+[package]
+name = "sandcastle-snapshot"
+version = "0.1.0"
+edition.workspace = true
+description = "Sandbox state snapshot, restore, and checkpoint management for SandCastle"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+sandcastle-fs = { path = "../sandcastle-fs" }
+sandcastle-audit = { path = "../sandcastle-audit" }
