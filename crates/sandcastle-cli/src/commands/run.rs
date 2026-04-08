@@ -14,16 +14,62 @@ use sandcastle_policy::resolver::ProfileResolver;
 fn matches_deny_list<'a>(value: &str, deny_patterns: &'a [String]) -> Option<&'a String> {
     deny_patterns.iter().find(|pattern| {
         let pat = pattern.as_str();
-        if pat == "*" {
+        // Catch-all wildcard.
+        if pat == "*" || pat == "**" {
             return true;
         }
-        if pat.contains('*') {
-            let parts: Vec<&str> = pat.splitn(2, '*').collect();
-            let (prefix, suffix) = (parts[0], parts[1]);
-            return value.starts_with(prefix) && value.ends_with(suffix);
+        // Handle /** and /**/* patterns (recursive directory match).
+        if pat.ends_with("/**") || pat.ends_with("/**/*") {
+            let prefix = pat.trim_end_matches("/**/*").trim_end_matches("/**");
+            return value == prefix || value.starts_with(&format!("{prefix}/"));
         }
+        // Single trailing * (one level).
+        if pat.ends_with("/*") && !pat.ends_with("/**") {
+            let prefix = pat.trim_end_matches("/*");
+            return value.starts_with(&format!("{prefix}/"));
+        }
+        // Leading * (suffix match).
+        if pat.starts_with('*') {
+            return value.ends_with(&pat[1..]);
+        }
+        // Exact match.
         value == pat
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::matches_deny_list;
+
+    #[test]
+    fn deny_double_star_matches_descendants() {
+        let deny = vec!["/etc/**".to_string()];
+        assert!(matches_deny_list("/etc/passwd", &deny).is_some());
+        assert!(matches_deny_list("/etc/ssh/config", &deny).is_some());
+        assert!(matches_deny_list("/etc", &deny).is_some());
+        assert!(matches_deny_list("/etcetera", &deny).is_none());
+    }
+
+    #[test]
+    fn deny_single_star_matches_one_level() {
+        let deny = vec!["/tmp/*".to_string()];
+        assert!(matches_deny_list("/tmp/file", &deny).is_some());
+        assert!(matches_deny_list("/tmp/sub/deep", &deny).is_some()); // prefix match
+    }
+
+    #[test]
+    fn deny_exact_match() {
+        let deny = vec!["169.254.169.254".to_string()];
+        assert!(matches_deny_list("169.254.169.254", &deny).is_some());
+        assert!(matches_deny_list("10.0.0.1", &deny).is_none());
+    }
+
+    #[test]
+    fn deny_leading_wildcard() {
+        let deny = vec!["*.internal".to_string()];
+        assert!(matches_deny_list("metadata.internal", &deny).is_some());
+        assert!(matches_deny_list("example.com", &deny).is_none());
+    }
 }
 
 /// Execute the `sandcastle run` command.
