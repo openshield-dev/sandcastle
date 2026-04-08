@@ -90,9 +90,15 @@ fn lexical_normalize(path: &Path) -> PathBuf {
     for component in path.components() {
         match component {
             Component::ParentDir => {
-                // Pop the last normal component, but never go above a root/prefix.
-                if matches!(components.last(), Some(_)) {
-                    components.pop();
+                // Pop the last Normal component, but never pop root/prefix.
+                if let Some(last) = components.last() {
+                    let is_normal = std::path::Path::new(last)
+                        .components()
+                        .next()
+                        .map_or(false, |c| matches!(c, Component::Normal(_)));
+                    if is_normal {
+                        components.pop();
+                    }
                 }
             }
             Component::CurDir => {}

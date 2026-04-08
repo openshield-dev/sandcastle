@@ -2,33 +2,34 @@
 
 **Your AI agent has root access to your machine. SandCastle gives it a sandbox instead.**
 
+[![CI](https://github.com/openshield-dev/sandcastle/actions/workflows/ci.yml/badge.svg)](https://github.com/openshield-dev/sandcastle/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Rust](https://img.shields.io/badge/Rust-stable-orange.svg)](https://www.rust-lang.org/)
-[![Part of OpenShield](https://img.shields.io/badge/OpenShield-ecosystem-green.svg)](https://github.com/openshield)
+[![Rust](https://img.shields.io/badge/Rust-1.70+-orange.svg)](https://www.rust-lang.org/)
+[![Part of OpenShield](https://img.shields.io/badge/OpenShield-ecosystem-green.svg)](https://github.com/openshield-dev)
+
+### Why SandCastle?
+
+- **Zero config** — pre-built profiles for Claude Code, Codex, Ollama, LangChain. Just wrap your command.
+- **Single binary** — no Docker, no daemon, no cloud. `cargo install sandcastle` and go.
+- **Learn-then-enforce** — run in audit mode first, auto-generate a tight policy from observed behavior.
+
+```bash
+# Install and sandbox your AI agent in 10 seconds
+cargo install sandcastle
+sandcastle run --profile claude-code -- claude
+```
+
+<!-- TODO: Replace with an asciinema recording or GIF showing sandcastle in action -->
+<!-- <p align="center"><img src="docs/demo.gif" width="600" alt="SandCastle demo"></p> -->
 
 ---
 
-## The Problem
+## Common Scenarios
 
-Local AI agents — Claude Code, Codex, LangChain agents, AutoGPT — run with your full user permissions. They can read your SSH keys, modify your shell config, exfiltrate environment variables, and make arbitrary network requests. Most users never think about this until something goes wrong.
-
-Existing sandboxing options fall short:
-
-- **Ashby / Sandbox** — macOS only, no Windows support
-- **OpenShell** — requires Docker and K3s, significant operational overhead
-- **E2B** — cloud-only, sends your code to a third-party service
-- **Containers** — complex to configure, no GPU passthrough, poor DX for local agents
-
-SandCastle is a single Rust binary that wraps any AI agent in OS-level isolation with zero configuration required for common agent profiles. No Docker, no Kubernetes, no cloud.
-
-**Key properties:**
-
-- Single binary, no daemon, no background service required
-- Pre-built profiles for Claude Code, Codex, Ollama, LangChain, and others
-- Graduated trust levels — restrict only what matters for your use case
-- GPU passthrough so local LLM inference still works inside the sandbox
-- Snapshot and restore so agents can't permanently damage your system
-- Interactive permission prompts for unknown syscalls or network destinations
+- **Running Claude Code on a client repo** without exposing `~/.ssh`, `~/.aws`, or env secrets
+- **Letting an AutoGPT agent browse the web** without touching your home directory
+- **CI pipeline with audited agent steps** — every file access and network call logged
+- **Local LLM inference with Ollama** — GPU passthrough inside the sandbox, host isolated
 
 ---
 
@@ -52,6 +53,20 @@ sandcastle run --interactive -- python agent.py
 # Audit mode: log everything but do not block anything
 sandcastle run --mode=audit -- python agent.py
 ```
+
+---
+
+## The Problem
+
+Local AI agents run with your full user permissions. They can read your SSH keys, modify your shell config, exfiltrate environment variables, and make arbitrary network requests.
+
+| Tool | Cross-platform | No Docker | GPU passthrough | Zero config | Snapshots |
+|------|:-:|:-:|:-:|:-:|:-:|
+| **SandCastle** | Linux, macOS, Windows | Yes | Yes | Yes | Yes |
+| Firejail | Linux only | Yes | No | No | No |
+| Bubblewrap | Linux only | Yes | No | No | No |
+| E2B | Cloud only | N/A | No | Partial | No |
+| Docker | All | No (requires Docker) | Complex | No | No |
 
 ---
 

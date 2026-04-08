@@ -2,7 +2,13 @@
 name = "sandcastle-cli"
 version = "0.1.0"
 edition.workspace = true
-description = "Command-line interface for the SandCastle OS-level isolation tool"
+description = "OS-level sandbox for AI agents — zero config, single binary, no Docker"
+repository = "https://github.com/openshield-dev/sandcastle"
+homepage = "https://github.com/openshield-dev/sandcastle"
+license = "Apache-2.0"
+readme = "../../README.md"
+keywords = ["sandbox", "ai-agent", "security", "isolation", "claude"]
+categories = ["command-line-utilities", "os"]
 
 [[bin]]
 name = "sandcastle"
