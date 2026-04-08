@@ -1,0 +1,98 @@
+{
+  "name": "sandcastle",
+  "displayName": "SandCastle - AI Agent Sandbox",
+  "description": "Monitor and control AI agent sandboxes from VS Code",
+  "version": "0.1.0",
+  "publisher": "openshield",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/openshield-dev/sandcastle"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "keywords": ["ai", "agent", "sandbox", "security", "claude"],
+  "activationEvents": [
+    "onCommand:sandcastle.monitor",
+    "workspaceContains:.sandcastle"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "sandcastle.monitor",
+        "title": "SandCastle: Open Monitor"
+      },
+      {
+        "command": "sandcastle.undo",
+        "title": "SandCastle: Undo Last Run"
+      },
+      {
+        "command": "sandcastle.diff",
+        "title": "SandCastle: Show Run Diff"
+      },
+      {
+        "command": "sandcastle.run",
+        "title": "SandCastle: Run Command in Sandbox"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "sandcastle",
+          "title": "SandCastle",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "sandcastle": [
+        {
+          "id": "sandcastle.activity",
+          "name": "Activity"
+        },
+        {
+          "id": "sandcastle.blocked",
+          "name": "Blocked Operations"
+        },
+        {
+          "id": "sandcastle.snapshots",
+          "name": "Snapshots"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "SandCastle",
+      "properties": {
+        "sandcastle.defaultProfile": {
+          "type": "string",
+          "default": "develop",
+          "description": "Default security profile for sandboxed runs"
+        },
+        "sandcastle.autoMonitor": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically open monitor when a sandbox starts"
+        },
+        "sandcastle.binaryPath": {
+          "type": "string",
+          "default": "sandcastle",
+          "description": "Path to the sandcastle binary"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0",
+    "@vscode/vsce": "^2.22.0"
+  }
+}

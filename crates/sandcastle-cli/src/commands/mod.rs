@@ -1,6 +1,12 @@
 pub mod audit;
+pub mod compare;
+pub mod diff;
+pub mod monitor;
 pub mod policy;
 pub mod profiles;
+pub mod registry;
+pub mod risk;
 pub mod run;
 pub mod snapshot;
+pub mod undo;
 pub mod validate;

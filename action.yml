@@ -1,0 +1,87 @@
+name: 'SandCastle Sandbox'
+description: 'Run AI agent commands in an OS-level sandbox with policy enforcement'
+author: 'OpenShield'
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  profile:
+    description: 'Security profile to use (claude-code, codex, ollama, develop, build)'
+    required: false
+    default: 'develop'
+  command:
+    description: 'Command to run inside the sandbox'
+    required: true
+  allow-dirs:
+    description: 'Additional directories to allow (comma-separated)'
+    required: false
+    default: ''
+  allow-net:
+    description: 'Additional network domains to allow (comma-separated)'
+    required: false
+    default: ''
+  mode:
+    description: 'Enforcement mode (enforce or audit)'
+    required: false
+    default: 'enforce'
+  max-risk-score:
+    description: 'Maximum acceptable risk score (0-10). Fails the step if exceeded.'
+    required: false
+    default: '10'
+  version:
+    description: 'SandCastle version to install'
+    required: false
+    default: 'latest'
+
+outputs:
+  risk-score:
+    description: 'Risk score of the sandboxed run (0-10)'
+  audit-log:
+    description: 'Path to the audit log file'
+  exit-code:
+    description: 'Exit code of the sandboxed command'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install SandCastle
+      shell: bash
+      run: |
+        if [ "${{ inputs.version }}" = "latest" ]; then
+          cargo install sandcastle-cli --locked
+        else
+          cargo install sandcastle-cli@${{ inputs.version }} --locked
+        fi
+
+    - name: Run sandboxed command
+      shell: bash
+      id: sandbox
+      run: |
+        ARGS="--profile ${{ inputs.profile }} --mode=${{ inputs.mode }}"
+
+        if [ -n "${{ inputs.allow-dirs }}" ]; then
+          IFS=',' read -ra DIRS <<< "${{ inputs.allow-dirs }}"
+          for dir in "${DIRS[@]}"; do
+            ARGS="$ARGS --allow-dir $(echo $dir | xargs)"
+          done
+        fi
+
+        if [ -n "${{ inputs.allow-net }}" ]; then
+          IFS=',' read -ra DOMAINS <<< "${{ inputs.allow-net }}"
+          for domain in "${DOMAINS[@]}"; do
+            ARGS="$ARGS --allow-net $(echo $domain | xargs)"
+          done
+        fi
+
+        sandcastle run $ARGS -- ${{ inputs.command }}
+        echo "exit-code=$?" >> $GITHUB_OUTPUT
+        echo "audit-log=.sandcastle/audit.log" >> $GITHUB_OUTPUT
+
+    - name: Upload audit log
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: sandcastle-audit-log
+        path: .sandcastle/audit.log
+        if-no-files-found: ignore

@@ -29,7 +29,9 @@
 pub mod error;
 pub mod event;
 pub mod export;
+pub mod fingerprint;
 pub mod logger;
+pub mod risk;
 pub mod store;
 pub mod violation;
 

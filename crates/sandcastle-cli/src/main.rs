@@ -92,6 +92,81 @@ enum Commands {
         #[command(subcommand)]
         action: ProfileCommands,
     },
+
+    /// Live monitoring dashboard for sandbox activity
+    Monitor {
+        /// Path to audit log file
+        #[arg(long)]
+        file: Option<String>,
+    },
+
+    /// Show what changed during the last sandbox run
+    Diff {
+        /// Path to audit log file
+        #[arg(long)]
+        file: Option<String>,
+        /// Compare against a named snapshot
+        #[arg(long)]
+        snapshot: Option<String>,
+    },
+
+    /// Undo the last sandbox run (restore pre-run snapshot)
+    Undo {
+        /// Skip confirmation prompt
+        #[arg(long, short)]
+        yes: bool,
+    },
+
+    /// Compare two sandbox runs side-by-side
+    Compare {
+        /// Audit log file for run A
+        #[arg(long)]
+        log_a: String,
+        /// Audit log file for run B
+        #[arg(long)]
+        log_b: String,
+        /// Profile name (for display)
+        #[arg(long, default_value = "develop")]
+        profile: String,
+    },
+
+    /// Show risk assessment for a sandbox run
+    Risk {
+        /// Path to audit log file
+        #[arg(long)]
+        file: Option<String>,
+        /// Filter to a specific session ID
+        #[arg(long)]
+        session: Option<String>,
+        /// Maximum acceptable risk score (exit 1 if exceeded)
+        #[arg(long)]
+        max_score: Option<u8>,
+    },
+
+    /// Search and install community sandbox profiles
+    Registry {
+        #[command(subcommand)]
+        action: RegistryCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum RegistryCommands {
+    /// Search for profiles by name or keyword
+    Search {
+        /// Search query
+        query: String,
+    },
+    /// Install a profile locally
+    Install {
+        /// Profile name
+        name: String,
+    },
+    /// Publish a profile to the community registry
+    Publish {
+        /// Path to the profile YAML file
+        file: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -245,6 +320,61 @@ fn main() -> anyhow::Result<()> {
             }
             ProfileCommands::Create { name } => {
                 commands::profiles::create(&name)?;
+            }
+        },
+
+        Commands::Monitor { file } => {
+            commands::monitor::execute(file.as_deref())?;
+        }
+
+        Commands::Diff { file, snapshot } => {
+            commands::diff::execute(file.as_deref(), snapshot.as_deref())?;
+        }
+
+        Commands::Undo { yes } => {
+            commands::undo::execute(yes)?;
+        }
+
+        Commands::Compare {
+            log_a,
+            log_b,
+            profile,
+        } => {
+            commands::compare::execute(
+                &[log_a],
+                &[log_b],
+                &profile,
+            )?;
+        }
+
+        Commands::Risk {
+            file,
+            session,
+            max_score,
+        } => {
+            if let Some(max) = max_score {
+                let passed = commands::risk::execute_with_threshold(
+                    file.as_deref(),
+                    session.as_deref(),
+                    max,
+                )?;
+                if !passed {
+                    std::process::exit(1);
+                }
+            } else {
+                commands::risk::execute(file.as_deref(), session.as_deref())?;
+            }
+        }
+
+        Commands::Registry { action } => match action {
+            RegistryCommands::Search { query } => {
+                commands::registry::search(&query)?;
+            }
+            RegistryCommands::Install { name } => {
+                commands::registry::install(&name)?;
+            }
+            RegistryCommands::Publish { file } => {
+                commands::registry::publish(&file)?;
             }
         },
     }
