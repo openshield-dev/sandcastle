@@ -68,15 +68,30 @@ impl Snapshot {
 
 /// Recursively sum the sizes of all regular files under `dir`.
 pub(crate) fn total_size(dir: &std::path::Path) -> Result<u64, std::io::Error> {
+    total_size_inner(dir, 0)
+}
+
+const MAX_DEPTH: u32 = 100;
+
+fn total_size_inner(dir: &std::path::Path, depth: u32) -> Result<u64, std::io::Error> {
+    if depth >= MAX_DEPTH {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "directory depth limit exceeded in total_size",
+        ));
+    }
     let mut total = 0u64;
     if !dir.exists() {
         return Ok(0);
     }
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
-        let meta = entry.metadata()?;
+        let meta = std::fs::symlink_metadata(entry.path())?;
+        if meta.file_type().is_symlink() {
+            continue; // Skip symlinks — don't follow into arbitrary directories.
+        }
         if meta.is_dir() {
-            total = total.checked_add(total_size(&entry.path())?).ok_or_else(|| {
+            total = total.checked_add(total_size_inner(&entry.path(), depth + 1)?).ok_or_else(|| {
                 std::io::Error::new(std::io::ErrorKind::InvalidData, "snapshot size overflow")
             })?;
         } else {
@@ -90,15 +105,28 @@ pub(crate) fn total_size(dir: &std::path::Path) -> Result<u64, std::io::Error> {
 
 /// Recursively count regular files under `dir`.
 pub(crate) fn count_files_in(dir: &std::path::Path) -> Result<u64, std::io::Error> {
+    count_files_inner(dir, 0)
+}
+
+fn count_files_inner(dir: &std::path::Path, depth: u32) -> Result<u64, std::io::Error> {
+    if depth >= MAX_DEPTH {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "directory depth limit exceeded in count_files",
+        ));
+    }
     let mut count = 0u64;
     if !dir.exists() {
         return Ok(0);
     }
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
-        let meta = entry.metadata()?;
+        let meta = std::fs::symlink_metadata(entry.path())?;
+        if meta.file_type().is_symlink() {
+            continue; // Skip symlinks.
+        }
         if meta.is_dir() {
-            count = count.checked_add(count_files_in(&entry.path())?).ok_or_else(|| {
+            count = count.checked_add(count_files_inner(&entry.path(), depth + 1)?).ok_or_else(|| {
                 std::io::Error::new(std::io::ErrorKind::InvalidData, "snapshot file count overflow")
             })?;
         } else {

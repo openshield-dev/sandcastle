@@ -41,13 +41,13 @@ impl DnsInterceptor {
     /// 4. Perform a stub resolution (loopback) and cache the result.
     pub fn resolve(&mut self, domain: &str) -> Result<Vec<IpAddr>, NetworkError> {
         // 1. Blocked list takes precedence.
-        if self.matches_any(domain, &self.blocked_domains.clone()) {
+        if matches_any_pattern(domain, &self.blocked_domains) {
             return Err(NetworkError::DomainBlocked(domain.to_string()));
         }
 
         // 2. If an allowlist is configured, domain must be on it.
         if !self.allowed_domains.is_empty()
-            && !self.matches_any(domain, &self.allowed_domains.clone())
+            && !matches_any_pattern(domain, &self.allowed_domains)
         {
             return Err(NetworkError::DomainBlocked(domain.to_string()));
         }
@@ -80,13 +80,13 @@ impl DnsInterceptor {
 
     /// Return `true` if `domain` is allowed without actually resolving it.
     pub fn is_allowed(&self, domain: &str) -> bool {
-        if self.matches_any(domain, &self.blocked_domains) {
+        if matches_any_pattern(domain, &self.blocked_domains) {
             return false;
         }
         if self.allowed_domains.is_empty() {
             return true;
         }
-        self.matches_any(domain, &self.allowed_domains)
+        matches_any_pattern(domain, &self.allowed_domains)
     }
 
     /// Evict all cached DNS entries.
@@ -103,17 +103,11 @@ impl DnsInterceptor {
         }
     }
 
-    // ── Internal helpers ─────────────────────────────────────────────────────
+}
 
-    /// Return `true` if `domain` matches any pattern in `patterns`.
-    ///
-    /// Supported glob syntax:
-    /// - `*` at the start of a pattern (e.g. `*.github.com`) matches any
-    ///   single label prefix.
-    /// - `*` alone matches every domain.
-    fn matches_any(&self, domain: &str, patterns: &[String]) -> bool {
-        patterns.iter().any(|p| glob_match(p, domain))
-    }
+/// Check if `domain` matches any of the given glob patterns.
+fn matches_any_pattern(domain: &str, patterns: &[String]) -> bool {
+    patterns.iter().any(|p| glob_match(p, domain))
 }
 
 /// Match `domain` against a simple glob `pattern`.
@@ -148,31 +142,41 @@ fn glob_match(pattern: &str, domain: &str) -> bool {
     }
 }
 
+/// Check an IPv4 address (as raw octets) against all private/reserved ranges.
+fn is_private_or_reserved_v4(octets: &[u8; 4]) -> bool {
+    // 0.0.0.0/8 ("this" network)
+    octets[0] == 0
+    // 10.0.0.0/8
+    || octets[0] == 10
+    // 172.16.0.0/12
+    || (octets[0] == 172 && (octets[1] & 0xf0) == 16)
+    // 192.168.0.0/16
+    || (octets[0] == 192 && octets[1] == 168)
+    // 127.0.0.0/8 (loopback)
+    || octets[0] == 127
+    // 169.254.0.0/16 (link-local / cloud metadata)
+    || (octets[0] == 169 && octets[1] == 254)
+    // 224.0.0.0/4 (multicast) + 240.0.0.0/4 (reserved)
+    || octets[0] >= 224
+}
+
 /// Return `true` if `ip` falls within a private, loopback, link-local, or other
 /// reserved range.  Used to block SSRF and cloud-metadata attacks after DNS
 /// resolution.
 fn is_private_or_reserved(ip: &IpAddr) -> bool {
     match ip {
-        IpAddr::V4(v4) => {
-            let octets = v4.octets();
-            // 10.0.0.0/8
-            octets[0] == 10
-            // 172.16.0.0/12
-            || (octets[0] == 172 && (octets[1] & 0xf0) == 16)
-            // 192.168.0.0/16
-            || (octets[0] == 192 && octets[1] == 168)
-            // 127.0.0.0/8 (loopback)
-            || octets[0] == 127
-            // 169.254.0.0/16 (link-local / cloud metadata)
-            || (octets[0] == 169 && octets[1] == 254)
-        }
+        IpAddr::V4(v4) => is_private_or_reserved_v4(&v4.octets()),
         IpAddr::V6(v6) => {
             // ::1 (loopback)
             *v6 == Ipv6Addr::LOCALHOST
-            // ::ffff:127.0.0.0/104 (IPv4-mapped loopback)
-            || matches!(v6.to_ipv4_mapped(), Some(v4) if v4.octets()[0] == 127)
+            // ::ffff:0.0.0.0/96 (IPv4-mapped — check the mapped address too)
+            || matches!(v6.to_ipv4_mapped(), Some(v4) if is_private_or_reserved_v4(&v4.octets()))
             // fe80::/10 (link-local)
             || (v6.segments()[0] & 0xffc0) == 0xfe80
+            // fc00::/7 (Unique Local Addresses)
+            || (v6.segments()[0] & 0xfe00) == 0xfc00
+            // ff00::/8 (multicast)
+            || (v6.segments()[0] & 0xff00) == 0xff00
         }
     }
 }

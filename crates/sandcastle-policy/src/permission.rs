@@ -240,6 +240,7 @@ impl TrustLevel {
                     deny_domains: vec![
                         "169.254.169.254".into(), // cloud metadata
                         "metadata.google.internal".into(),
+                        "metadata.internal".into(),
                     ],
                     max_bandwidth: None,
                 },

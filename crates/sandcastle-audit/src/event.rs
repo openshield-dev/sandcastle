@@ -14,16 +14,17 @@ const MAX_LOG_STRING_LEN: usize = 4096;
 /// - Strips null bytes.
 /// - Truncates to [`MAX_LOG_STRING_LEN`] characters.
 pub fn sanitize_log_string(s: &str) -> String {
-    let sanitized: String = s
-        .chars()
+    s.chars()
         .filter(|&c| c != '\0')
-        .map(|c| match c {
-            '\n' | '\r' => ' ',
-            other => other,
+        .map(|c| {
+            if c.is_control() {
+                ' ' // Replace all control chars (newlines, tabs, ESC, etc.)
+            } else {
+                c
+            }
         })
         .take(MAX_LOG_STRING_LEN)
-        .collect();
-    sanitized
+        .collect()
 }
 
 /// Fine-grained event type for every sandboxed action.

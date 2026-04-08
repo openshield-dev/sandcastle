@@ -19,6 +19,8 @@ use crate::event::{AuditEvent, PolicyDecision};
 pub trait AuditSink: Send + Sync {
     /// Write a single event to the sink.
     fn write_event(&self, event: &AuditEvent) -> Result<(), AuditError>;
+    /// Write a pre-serialized JSON line (enriched with sequence number).
+    fn write_line(&self, json_line: &str) -> Result<(), AuditError>;
     /// Flush any buffered data to the underlying storage.
     fn flush(&self) -> Result<(), AuditError>;
 }
@@ -66,11 +68,15 @@ impl FileAuditSink {
 impl AuditSink for FileAuditSink {
     fn write_event(&self, event: &AuditEvent) -> Result<(), AuditError> {
         let line = serde_json::to_string(event)?;
+        self.write_line(&line)
+    }
+
+    fn write_line(&self, json_line: &str) -> Result<(), AuditError> {
         let mut w = match self.writer.lock() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
         };
-        writeln!(w, "{line}").map_err(AuditError::Io)
+        writeln!(w, "{json_line}").map_err(AuditError::Io)
     }
 
     fn flush(&self) -> Result<(), AuditError> {
@@ -92,7 +98,11 @@ pub struct StdoutAuditSink;
 impl AuditSink for StdoutAuditSink {
     fn write_event(&self, event: &AuditEvent) -> Result<(), AuditError> {
         let line = serde_json::to_string(event)?;
-        println!("{line}");
+        self.write_line(&line)
+    }
+
+    fn write_line(&self, json_line: &str) -> Result<(), AuditError> {
+        println!("{json_line}");
         Ok(())
     }
 
@@ -119,6 +129,11 @@ impl AuditSink for TracingAuditSink {
             detail    = %event.action.description,
             "audit"
         );
+        Ok(())
+    }
+
+    fn write_line(&self, json_line: &str) -> Result<(), AuditError> {
+        info!(json = %json_line, "audit");
         Ok(())
     }
 
@@ -266,9 +281,11 @@ impl AuditLogger {
         }
         self.event_count = self.event_count.saturating_add(1);
 
+        // Write enriched JSON (with seq number) to sinks instead of raw event.
+        let enriched_line = serde_json::to_string(&value)?;
         let mut first_error: Option<AuditError> = None;
         for sink in &self.sinks {
-            if let Err(e) = sink.write_event(&event) {
+            if let Err(e) = sink.write_line(&enriched_line) {
                 if first_error.is_none() {
                     first_error = Some(e);
                 }
