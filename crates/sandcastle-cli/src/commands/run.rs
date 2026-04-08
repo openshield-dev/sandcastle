@@ -5,6 +5,36 @@ use sandcastle_audit::AuditLogger;
 use sandcastle_platform::{create_sandbox, SandboxConfig};
 use sandcastle_policy::resolver::ProfileResolver;
 
+/// Environment variable names that are stripped before passing to the sandbox.
+/// These commonly contain secrets or grant elevated access.
+const SENSITIVE_ENV_PREFIXES: &[&str] = &[
+    "AWS_", "AZURE_", "GCP_", "GOOGLE_", "ANTHROPIC_", "OPENAI_",
+    "GITHUB_TOKEN", "GITLAB_TOKEN", "NPM_TOKEN", "DOCKER_",
+    "SSH_AUTH_SOCK", "GPG_",
+];
+
+const SENSITIVE_ENV_EXACT: &[&str] = &[
+    "SECRET_KEY", "API_KEY", "TOKEN", "PASSWORD", "CREDENTIALS",
+    "DATABASE_URL", "REDIS_URL", "SENTRY_DSN",
+];
+
+/// Filter environment variables, removing known sensitive keys.
+fn filter_env_vars(vars: impl Iterator<Item = (String, String)>) -> Vec<(String, String)> {
+    vars.filter(|(key, _)| {
+        let upper = key.to_uppercase();
+        // Drop vars whose name matches a sensitive prefix.
+        if SENSITIVE_ENV_PREFIXES.iter().any(|p| upper.starts_with(p)) {
+            return false;
+        }
+        // Drop vars whose name exactly matches a sensitive key.
+        if SENSITIVE_ENV_EXACT.iter().any(|&s| upper == s) {
+            return false;
+        }
+        true
+    })
+    .collect()
+}
+
 /// Returns `true` when `value` matches any entry in `deny_patterns`.
 ///
 /// Supports simple glob patterns: `*` alone matches everything, a leading `*`
@@ -69,6 +99,29 @@ mod tests {
         let deny = vec!["*.internal".to_string()];
         assert!(matches_deny_list("metadata.internal", &deny).is_some());
         assert!(matches_deny_list("example.com", &deny).is_none());
+    }
+
+    #[test]
+    fn env_filter_strips_secrets() {
+        let vars = vec![
+            ("PATH".into(), "/usr/bin".into()),
+            ("HOME".into(), "/home/user".into()),
+            ("AWS_SECRET_ACCESS_KEY".into(), "secret".into()),
+            ("ANTHROPIC_API_KEY".into(), "key".into()),
+            ("GITHUB_TOKEN".into(), "ghp_xxx".into()),
+            ("MY_APP_VAR".into(), "safe".into()),
+        ];
+        let filtered = super::filter_env_vars(
+            // filter_env_vars takes std::env::Vars, so test via the logic directly
+            vars.into_iter(),
+        );
+        let keys: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(keys.contains(&"PATH"));
+        assert!(keys.contains(&"HOME"));
+        assert!(keys.contains(&"MY_APP_VAR"));
+        assert!(!keys.contains(&"AWS_SECRET_ACCESS_KEY"));
+        assert!(!keys.contains(&"ANTHROPIC_API_KEY"));
+        assert!(!keys.contains(&"GITHUB_TOKEN"));
     }
 }
 
@@ -146,7 +199,7 @@ pub fn execute(
         working_dir: std::env::current_dir().context("Failed to determine current directory")?,
         command: bin.clone(),
         args: args.to_vec(),
-        env: std::env::vars().collect(),
+        env: filter_env_vars(std::env::vars()),
         interactive,
         audit_mode,
     };
