@@ -222,3 +222,116 @@ impl FilterGenerator {
         Ok(GeneratedFilter { target, rules })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::permission::*;
+
+    /// Helper: build a minimal Permissions with empty everything.
+    fn empty_permissions() -> Permissions {
+        Permissions {
+            filesystem: FsPermissions {
+                allow_read: vec![],
+                allow_write: vec![],
+                deny: vec![],
+            },
+            network: NetworkPermissions {
+                allow_domains: vec![],
+                deny_domains: vec![],
+                max_bandwidth: None,
+            },
+            processes: ProcessPermissions {
+                allow: vec![],
+                deny: vec![],
+            },
+            resources: ResourceLimits {
+                max_cpu: None,
+                max_memory: None,
+                max_disk: None,
+                max_open_files: None,
+            },
+            gpu: GpuPermissions {
+                enabled: false,
+                devices: vec![],
+            },
+        }
+    }
+
+    #[test]
+    fn deny_rules_precede_allow_rules() {
+        // A filter with both deny and allow filesystem entries should emit
+        // deny rules before allow rules for each category.
+        let mut perms = empty_permissions();
+        perms.filesystem.deny = vec!["/secret/**".into()];
+        perms.filesystem.allow_read = vec!["/public/**".into()];
+
+        let filter = FilterGenerator::generate(&perms, FilterTarget::SeccompBpf).unwrap();
+
+        // Find the indices of the first filesystem deny and the first filesystem allow.
+        let first_deny = filter
+            .rules
+            .iter()
+            .position(|r| r.subject == "filesystem" && r.action == FilterAction::Deny && r.detail.contains("/secret"))
+            .expect("expected a filesystem deny rule for /secret");
+        let first_allow = filter
+            .rules
+            .iter()
+            .position(|r| r.subject == "filesystem" && r.action == FilterAction::Allow)
+            .expect("expected a filesystem allow rule");
+
+        assert!(
+            first_deny < first_allow,
+            "deny rule (index {first_deny}) must come before allow rule (index {first_allow})"
+        );
+    }
+
+    #[test]
+    fn default_deny_always_emitted() {
+        // Even with allow entries, the generated filter must end each category
+        // section with a deny-all fallback.
+        let mut perms = empty_permissions();
+        perms.filesystem.allow_read = vec!["/home/**".into()];
+        perms.network.allow_domains = vec!["example.com".into()];
+
+        let filter = FilterGenerator::generate(&perms, FilterTarget::LandlockRuleset).unwrap();
+
+        let has_fs_deny_all = filter
+            .rules
+            .iter()
+            .any(|r| r.subject == "filesystem" && r.action == FilterAction::Deny && r.detail == "deny path=*");
+        let has_net_deny_all = filter
+            .rules
+            .iter()
+            .any(|r| r.subject == "network" && r.action == FilterAction::Deny && r.detail == "deny domain=*");
+
+        assert!(has_fs_deny_all, "filesystem deny-all fallback must be emitted");
+        assert!(has_net_deny_all, "network deny-all fallback must be emitted");
+    }
+
+    #[test]
+    fn empty_permissions_produce_deny_all() {
+        let perms = empty_permissions();
+        let filter = FilterGenerator::generate(&perms, FilterTarget::WindowsJobObject).unwrap();
+
+        // With empty permissions there should be no Allow rules at all.
+        let allow_count = filter
+            .rules
+            .iter()
+            .filter(|r| r.action == FilterAction::Allow)
+            .count();
+        assert_eq!(allow_count, 0, "empty permissions must not produce any Allow rules");
+
+        // But deny-all fallbacks must still be present for filesystem, network, process, gpu.
+        let deny_all_subjects: Vec<&str> = filter
+            .rules
+            .iter()
+            .filter(|r| r.action == FilterAction::Deny && (r.detail.ends_with("=*") || r.detail.ends_with("device=*")))
+            .map(|r| r.subject.as_str())
+            .collect();
+        assert!(deny_all_subjects.contains(&"filesystem"));
+        assert!(deny_all_subjects.contains(&"network"));
+        assert!(deny_all_subjects.contains(&"process"));
+        assert!(deny_all_subjects.contains(&"gpu"));
+    }
+}

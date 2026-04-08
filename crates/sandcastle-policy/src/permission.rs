@@ -432,3 +432,96 @@ impl Permissions {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::profile::ProfileOverrides;
+
+    #[test]
+    fn merge_deny_lists_accumulate() {
+        let base = TrustLevel::Develop.default_permissions();
+        let overrides = ProfileOverrides {
+            filesystem: Some(FsPermissions {
+                allow_read: vec!["/new/**".into()],
+                allow_write: vec![],
+                deny: vec!["/extra-secret/**".into()],
+            }),
+            ..Default::default()
+        };
+
+        let merged = base.merge(&overrides);
+
+        // The base deny list entries must still be present.
+        assert!(merged.filesystem.deny.iter().any(|d| d == "/etc/**"));
+        // The override deny entry must also be present.
+        assert!(merged.filesystem.deny.iter().any(|d| d == "/extra-secret/**"));
+    }
+
+    #[test]
+    fn merge_allow_lists_replace() {
+        let base = TrustLevel::Develop.default_permissions();
+        let original_allow_read = base.filesystem.allow_read.clone();
+
+        let overrides = ProfileOverrides {
+            filesystem: Some(FsPermissions {
+                allow_read: vec!["/only-this/**".into()],
+                allow_write: vec![],
+                deny: vec![],
+            }),
+            ..Default::default()
+        };
+
+        let merged = base.merge(&overrides);
+
+        // Allow list should be entirely replaced by the override.
+        assert_eq!(merged.filesystem.allow_read, vec!["/only-this/**".to_string()]);
+        assert_ne!(merged.filesystem.allow_read, original_allow_read);
+    }
+
+    #[test]
+    fn default_trust_level_is_develop() {
+        let level = TrustLevel::default();
+        assert_eq!(level, TrustLevel::Develop);
+    }
+
+    #[test]
+    fn trust_level_ordering() {
+        assert!(TrustLevel::Explore < TrustLevel::Develop);
+        assert!(TrustLevel::Develop < TrustLevel::Build);
+        assert!(TrustLevel::Build < TrustLevel::Full);
+        assert!(TrustLevel::Full < TrustLevel::Unrestricted);
+    }
+
+    #[test]
+    fn cloud_metadata_blocked_all_levels() {
+        // Explore blocks all domains with "*", so metadata is implicitly blocked.
+        // Develop/Build/Full must explicitly list the metadata IPs.
+        let explicit_levels = [
+            TrustLevel::Develop,
+            TrustLevel::Build,
+            TrustLevel::Full,
+        ];
+
+        for level in &explicit_levels {
+            let perms = level.default_permissions();
+            let has_metadata_deny = perms
+                .network
+                .deny_domains
+                .iter()
+                .any(|d| d == "169.254.169.254");
+            assert!(
+                has_metadata_deny,
+                "trust level {:?} must block cloud metadata endpoint 169.254.169.254",
+                level
+            );
+        }
+
+        // Explore blocks everything (deny_domains contains "*").
+        let explore_perms = TrustLevel::Explore.default_permissions();
+        assert!(
+            explore_perms.network.deny_domains.iter().any(|d| d == "*"),
+            "Explore must deny all network domains"
+        );
+    }
+}

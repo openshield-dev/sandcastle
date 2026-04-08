@@ -125,3 +125,25 @@ impl ProfileResolver {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::profile::BuiltinProfile;
+
+    #[test]
+    fn auto_detect_claude() {
+        let result = ProfileResolver::auto_detect("claude");
+        assert_eq!(result, Some(BuiltinProfile::ClaudeCode));
+    }
+
+    #[test]
+    fn auto_detect_path_injection_rejected() {
+        // A malicious path containing "claude" as a directory component must NOT match.
+        let result = ProfileResolver::auto_detect("/path/to/evil-claude");
+        assert_eq!(result, None, "path injection with 'evil-claude' must not match ClaudeCode");
+
+        let result2 = ProfileResolver::auto_detect("/tmp/malicious-claude-worm");
+        assert_eq!(result2, None, "path injection with 'malicious-claude-worm' must not match");
+    }
+}

@@ -204,8 +204,28 @@ pub fn execute(
         audit_mode,
     };
 
-    // 5. Setup audit logger.
-    let _logger = AuditLogger::new();
+    // 5. Setup audit logger with file sink.
+    let mut logger = AuditLogger::new();
+    let audit_dir = std::env::current_dir()
+        .context("Failed to determine current directory")?
+        .join(".sandcastle");
+    std::fs::create_dir_all(&audit_dir)
+        .with_context(|| format!("Failed to create audit directory: {}", audit_dir.display()))?;
+    let audit_path = audit_dir.join("audit.log");
+    if let Ok(sink) = sandcastle_audit::FileAuditSink::new(audit_path) {
+        logger.add_sink(Box::new(sink));
+    }
+
+    // 6. Setup filesystem guard for policy enforcement.
+    let fs_guard = sandcastle_fs::guard::FsGuard::new(sandbox_profile.clone());
+    // Validate the command binary path against filesystem policy.
+    let cmd_path = std::path::Path::new(bin);
+    if let Err(e) = fs_guard.check_read(cmd_path) {
+        if !audit_mode {
+            anyhow::bail!("Filesystem policy denies executing '{bin}': {e}");
+        }
+        eprintln!("sandcastle: audit: filesystem policy would deny executing '{bin}': {e}");
+    }
 
     // 6. Create and start the sandbox.
     println!(

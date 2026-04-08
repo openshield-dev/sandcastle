@@ -16,6 +16,13 @@ uuid = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 nix = { version = "0.29", features = ["fs", "mount", "sched", "signal", "user"] }
+landlock = "0.4"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_System_JobObjects", "Win32_Security", "Win32_Foundation"] }
+windows-sys = { version = "0.59", features = [
+    "Win32_System_JobObjects",
+    "Win32_Security",
+    "Win32_Foundation",
+    "Win32_Security_AppLocker",
+    "Win32_System_Threading",
+] }

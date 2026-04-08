@@ -15,3 +15,6 @@ chrono = { workspace = true }
 uuid = { workspace = true }
 sandcastle-fs = { path = "../sandcastle-fs" }
 sandcastle-audit = { path = "../sandcastle-audit" }
+
+[dev-dependencies]
+tempfile = "3"

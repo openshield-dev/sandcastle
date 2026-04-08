@@ -1,3 +1,4 @@
+#![allow(unsafe_code)]
 //! macOS sandbox implementation.
 //!
 //! # Security architecture
@@ -18,15 +19,23 @@
 use crate::error::PlatformError;
 use crate::sandbox::{Sandbox, SandboxConfig, SandboxStatus};
 use sandcastle_policy::SandboxProfile;
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, ExitStatus};
 use tracing::{debug, info};
 
 /// A sandboxed process on macOS.
+///
+/// The sandbox is enforced via `sandbox_init(3)`, which applies an SBPL
+/// (Sandbox Profile Language) policy to the child process before it execs
+/// the target command.  The SBPL profile is generated at creation time from
+/// the [`SandboxProfile`] and stored here so that `start()` can pass it
+/// into the `pre_exec` hook.
 pub struct MacOSSandbox {
     id: String,
     config: SandboxConfig,
     status: SandboxStatus,
     child: Option<Child>,
+    sbpl_profile: String,
 }
 
 impl Sandbox for MacOSSandbox {
@@ -34,8 +43,8 @@ impl Sandbox for MacOSSandbox {
         let id = uuid::Uuid::new_v4().to_string();
         info!(sandbox_id = %id, command = %config.command, "creating macOS sandbox");
 
-        let profile_src = generate_sandbox_profile(&config.profile)?;
-        debug!(profile = %profile_src, "sandbox-exec: would load SBPL profile (stub)");
+        let sbpl_profile = generate_sandbox_profile(&config.profile)?;
+        debug!(sandbox_id = %id, profile = %sbpl_profile, "generated SBPL profile");
 
         setup_endpoint_security(&config.profile)?;
         setup_lima_vm_if_needed(&config)?;
@@ -45,6 +54,7 @@ impl Sandbox for MacOSSandbox {
             config,
             status: SandboxStatus::Created,
             child: None,
+            sbpl_profile,
         })
     }
 
@@ -57,8 +67,6 @@ impl Sandbox for MacOSSandbox {
 
         info!(sandbox_id = %self.id, command = %self.config.command, "starting sandboxed process (macOS)");
 
-        // In a real implementation this would invoke `sandbox-exec -f <profile> <command>`.
-        // For now we launch the command directly so the stub compiles and runs.
         let mut cmd = Command::new(&self.config.command);
         cmd.args(&self.config.args)
             .current_dir(&self.config.working_dir);
@@ -67,8 +75,76 @@ impl Sandbox for MacOSSandbox {
             cmd.env(k, v);
         }
 
+        // Apply the SBPL sandbox profile to the child process via sandbox_init(3).
+        //
+        // sandbox_init is called inside pre_exec, which runs in the forked child
+        // *before* exec.  This means the sandbox policy is already active by the
+        // time the target binary starts executing.
+        //
+        // Although sandbox_init is marked deprecated in macOS headers, it remains
+        // functional through macOS 14 (Sonoma) and is the most reliable way to
+        // apply an SBPL profile programmatically without requiring the
+        // sandbox-exec binary.
+        let sbpl = self.sbpl_profile.clone();
+        unsafe {
+            cmd.pre_exec(move || {
+                use std::ffi::CString;
+
+                extern "C" {
+                    /// Apply a sandbox profile to the current process.
+                    ///
+                    /// - `profile`: null-terminated SBPL string (when flags = SANDBOX_NAMED)
+                    /// - `flags`: `SANDBOX_NAMED` (0x0001) means `profile` is an SBPL
+                    ///   string, not a predefined profile name.
+                    /// - `errorbuf`: on failure, set to a malloc'd error description.
+                    ///
+                    /// Returns 0 on success, -1 on failure.
+                    fn sandbox_init(
+                        profile: *const std::ffi::c_char,
+                        flags: u64,
+                        errorbuf: *mut *mut std::ffi::c_char,
+                    ) -> i32;
+
+                    /// Free an error buffer returned by `sandbox_init`.
+                    fn sandbox_free_error(errorbuf: *mut std::ffi::c_char);
+                }
+
+                const SANDBOX_NAMED: u64 = 0x0001;
+
+                let c_profile = CString::new(sbpl.as_str()).map_err(|_| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "SBPL profile contains null byte",
+                    )
+                })?;
+
+                let mut errorbuf: *mut std::ffi::c_char = std::ptr::null_mut();
+                let result = sandbox_init(c_profile.as_ptr(), SANDBOX_NAMED, &mut errorbuf);
+
+                if result != 0 {
+                    let err_msg = if !errorbuf.is_null() {
+                        let msg =
+                            std::ffi::CStr::from_ptr(errorbuf).to_string_lossy().to_string();
+                        sandbox_free_error(errorbuf);
+                        msg
+                    } else {
+                        "unknown sandbox_init error".to_string()
+                    };
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        err_msg,
+                    ));
+                }
+
+                Ok(())
+            });
+        }
+
         let child = cmd.spawn().map_err(|e| {
-            PlatformError::ExecFailed(format!("failed to spawn '{}': {e}", self.config.command))
+            PlatformError::ExecFailed(format!(
+                "failed to spawn sandboxed '{}': {e}",
+                self.config.command
+            ))
         })?;
 
         self.child = Some(child);
@@ -123,6 +199,11 @@ impl Sandbox for MacOSSandbox {
 /// explicit allow rules derived from `SandboxProfile.permissions`.
 fn generate_sandbox_profile(profile: &SandboxProfile) -> Result<String, PlatformError> {
     let mut sbpl = String::from("(version 1)\n(deny default)\n");
+
+    // Allow the target command (and any child processes it spawns) to execute.
+    // Without this rule, the deny-default policy would block execve(2) itself.
+    sbpl.push_str("(allow process-exec*)\n");
+    sbpl.push_str("(allow process-fork)\n");
 
     for path in &profile.permissions.filesystem.allow_read {
         let escaped = escape_sbpl_path(path)?;
@@ -196,6 +277,3 @@ fn setup_lima_vm_if_needed(config: &SandboxConfig) -> Result<(), PlatformError> 
     }
     Ok(())
 }
-
-#[allow(unused_imports)]
-use uuid;

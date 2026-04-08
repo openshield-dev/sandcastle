@@ -43,3 +43,7 @@ pub use event::AuditEvent;
 pub use event::EventKind;
 /// The multi-sink logger.
 pub use logger::AuditLogger;
+/// File-based audit sink.
+pub use logger::FileAuditSink;
+/// Stdout audit sink (for debugging).
+pub use logger::StdoutAuditSink;

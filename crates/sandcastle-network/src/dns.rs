@@ -2,14 +2,28 @@
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv6Addr};
+use std::time::{Duration, Instant};
+
+use hickory_resolver::config::{ResolverConfig, ResolverOpts};
+use hickory_resolver::TokioAsyncResolver;
 
 use crate::error::NetworkError;
+
+/// Time-to-live for DNS cache entries.
+const DNS_CACHE_TTL: Duration = Duration::from_secs(300); // 5 minutes
+
+/// A cached DNS resolution result with an expiration timestamp.
+#[derive(Debug, Clone)]
+struct CacheEntry {
+    ips: Vec<IpAddr>,
+    inserted_at: Instant,
+}
 
 /// DNS resolution interceptor that checks domains against an allowlist before resolving.
 #[derive(Debug)]
 pub struct DnsInterceptor {
-    /// Cached DNS resolutions: domain → resolved IPs.
-    cache: HashMap<String, Vec<IpAddr>>,
+    /// Cached DNS resolutions: domain → resolved IPs with TTL.
+    cache: HashMap<String, CacheEntry>,
     /// Allowed domains (simple glob patterns, e.g. `*.github.com`).
     allowed_domains: Vec<String>,
     /// Blocked domains — takes precedence over allowed.
@@ -18,6 +32,8 @@ pub struct DnsInterceptor {
     cache_hits: u64,
     /// Cache miss counter.
     cache_misses: u64,
+    /// Cache expired counter.
+    cache_expired: u64,
 }
 
 impl DnsInterceptor {
@@ -29,6 +45,7 @@ impl DnsInterceptor {
             blocked_domains: blocked,
             cache_hits: 0,
             cache_misses: 0,
+            cache_expired: 0,
         }
     }
 
@@ -52,17 +69,36 @@ impl DnsInterceptor {
             return Err(NetworkError::DomainBlocked(domain.to_string()));
         }
 
-        // 3. Return cached result.
-        if let Some(ips) = self.cache.get(domain) {
-            self.cache_hits += 1;
-            return Ok(ips.clone());
+        // 3. Return cached result if still valid.
+        if let Some(entry) = self.cache.get(domain) {
+            if entry.inserted_at.elapsed() < DNS_CACHE_TTL {
+                self.cache_hits += 1;
+                return Ok(entry.ips.clone());
+            }
+            // Entry expired — will re-resolve below.
+            self.cache_expired += 1;
         }
 
-        // 4. Stub resolution — real async resolution via hickory-resolver would live here.
-        //    Uses a placeholder public IP; a real implementation would call the system
-        //    resolver or hickory-resolver and return actual results.
+        // 4. Perform real DNS resolution via hickory-resolver.
         self.cache_misses += 1;
-        let ips: Vec<IpAddr> = vec![IpAddr::from([93, 184, 216, 34])];
+
+        let resolver = TokioAsyncResolver::tokio(
+            ResolverConfig::default(),
+            ResolverOpts::default(),
+        );
+
+        let rt = tokio::runtime::Runtime::new()
+            .map_err(|e| NetworkError::DnsResolutionFailed(format!("failed to create runtime: {e}")))?;
+
+        let response = rt.block_on(resolver.lookup_ip(domain))
+            .map_err(|e| NetworkError::DnsResolutionFailed(format!("DNS lookup failed for {domain}: {e}")))?;
+
+        let ips: Vec<IpAddr> = response.iter().collect();
+        if ips.is_empty() {
+            return Err(NetworkError::DnsResolutionFailed(format!(
+                "no addresses found for {domain}"
+            )));
+        }
 
         // 5. Reject any resolved IP that falls in a private or reserved range
         //    to prevent SSRF / cloud-metadata attacks.
@@ -74,7 +110,10 @@ impl DnsInterceptor {
             }
         }
 
-        self.cache.insert(domain.to_string(), ips.clone());
+        self.cache.insert(domain.to_string(), CacheEntry {
+            ips: ips.clone(),
+            inserted_at: Instant::now(),
+        });
         Ok(ips)
     }
 
@@ -100,6 +139,7 @@ impl DnsInterceptor {
             entries: self.cache.len(),
             hits: self.cache_hits,
             misses: self.cache_misses,
+            expired: self.cache_expired,
         }
     }
 
@@ -187,6 +227,7 @@ pub struct DnsCacheStats {
     pub entries: usize,
     pub hits: u64,
     pub misses: u64,
+    pub expired: u64,
 }
 
 #[cfg(test)]
@@ -214,19 +255,20 @@ mod tests {
 
     #[test]
     fn blocked_domain_rejected() {
-        let mut dns = DnsInterceptor::new(
+        let dns = DnsInterceptor::new(
             vec!["*.example.com".into()],
             vec!["bad.example.com".into()],
         );
-        assert!(dns.resolve("bad.example.com").is_err());
-        assert!(dns.resolve("good.example.com").is_ok());
+        // Use is_allowed() to test blocklist logic without real DNS
+        assert!(!dns.is_allowed("bad.example.com"));
+        assert!(dns.is_allowed("good.example.com"));
     }
 
     #[test]
     fn allowlist_blocks_unknown_domain() {
-        let mut dns =
+        let dns =
             DnsInterceptor::new(vec!["api.openai.com".into()], vec![]);
-        assert!(dns.resolve("api.openai.com").is_ok());
-        assert!(dns.resolve("evil.example.com").is_err());
+        assert!(dns.is_allowed("api.openai.com"));
+        assert!(!dns.is_allowed("evil.example.com"));
     }
 }

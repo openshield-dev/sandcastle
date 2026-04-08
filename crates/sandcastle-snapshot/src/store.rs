@@ -320,6 +320,54 @@ fn validate_name(name: &str) -> Result<(), SnapshotError> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn validate_name_rejects_path_traversal() {
+        let result = validate_name("../escape");
+        assert!(result.is_err(), "names containing '..' must be rejected");
+    }
+
+    #[test]
+    fn validate_name_rejects_slashes() {
+        assert!(validate_name("dir/name").is_err(), "forward slash must be rejected");
+        assert!(validate_name("dir\\name").is_err(), "backslash must be rejected");
+    }
+
+    #[test]
+    fn validate_name_rejects_empty() {
+        assert!(validate_name("").is_err(), "empty name must be rejected");
+    }
+
+    #[test]
+    fn validate_name_accepts_valid() {
+        assert!(validate_name("my-snapshot_v1.0").is_ok(), "valid name with hyphens, underscores, and dots must be accepted");
+    }
+
+    #[test]
+    fn create_and_list_snapshot() {
+        // Set up a temporary store root and a source directory with a file.
+        let store_tmp = tempfile::tempdir().unwrap();
+        let source_tmp = tempfile::tempdir().unwrap();
+        fs::write(source_tmp.path().join("hello.txt"), b"world").unwrap();
+
+        let mut store = SnapshotStore::open(store_tmp.path().to_path_buf()).unwrap();
+
+        // Create a snapshot.
+        let meta = store.create("test-snap", source_tmp.path(), Some("test description".into())).unwrap();
+        assert_eq!(meta.name, "test-snap");
+        assert_eq!(meta.file_count, 1);
+
+        // List snapshots — should contain exactly one.
+        let list = store.list();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].name, "test-snap");
+    }
+}
+
 /// Recursively copy the entire directory tree from `src` into `dst`.
 ///
 /// `dst` and any intermediate directories are created automatically.

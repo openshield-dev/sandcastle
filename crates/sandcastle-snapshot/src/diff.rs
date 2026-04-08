@@ -199,6 +199,44 @@ fn walk_dir_inner(
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn diff_identical_dirs() {
+        let dir_a = tempfile::tempdir().unwrap();
+        let dir_b = tempfile::tempdir().unwrap();
+
+        fs::write(dir_a.path().join("same.txt"), b"content").unwrap();
+        fs::write(dir_b.path().join("same.txt"), b"content").unwrap();
+
+        let diff = SnapshotDiff::compare(dir_a.path(), dir_b.path()).unwrap();
+
+        // Sizes match and (on most OSes) mtimes will differ, so the file may
+        // show as Modified. But there must be zero Added and zero Deleted entries.
+        assert_eq!(diff.total_added, 0, "identical dirs should have no added files");
+        assert_eq!(diff.total_deleted, 0, "identical dirs should have no deleted files");
+    }
+
+    #[test]
+    fn diff_added_file() {
+        let dir_a = tempfile::tempdir().unwrap();
+        let dir_b = tempfile::tempdir().unwrap();
+
+        // dir_b has an extra file that dir_a does not.
+        fs::write(dir_b.path().join("new_file.txt"), b"hello").unwrap();
+
+        let diff = SnapshotDiff::compare(dir_a.path(), dir_b.path()).unwrap();
+        assert_eq!(diff.total_added, 1, "file in B but not A should be Added");
+
+        let added = diff.entries.iter().find(|e| matches!(e.diff_type, DiffType::Added));
+        assert!(added.is_some(), "should have an Added entry");
+        assert_eq!(added.unwrap().new_size, Some(5));
+    }
+}
+
 /// Return `true` when the two [`FileInfo`] records represent a changed file.
 ///
 /// Two files are considered identical when their size AND modification

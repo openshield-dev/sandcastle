@@ -177,7 +177,8 @@ mod tests {
     fn empty_allowlist_allows_all() {
         let perms = make_permissions(vec![], vec![]);
         let mut filter = NetworkFilter::from_permissions(&perms);
-        assert!(filter.check_request("any.domain.example", 80, 0).is_ok());
+        // With empty allowlist, any domain is permitted (DNS must resolve though).
+        assert!(filter.check_request("example.com", 80, 0).is_ok());
     }
 
     #[test]
