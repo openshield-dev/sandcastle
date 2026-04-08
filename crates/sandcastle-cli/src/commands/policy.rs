@@ -49,7 +49,7 @@ pub fn validate(file: &str) -> anyhow::Result<()> {
 /// Resolve and pretty-print the effective permissions for a named profile.
 pub fn show(profile: &str) -> anyhow::Result<()> {
     let resolver = ProfileResolver::new(vec![
-        std::env::current_dir().unwrap_or_default(),
+        std::env::current_dir().context("Failed to determine current directory")?,
     ]);
 
     let p = resolver

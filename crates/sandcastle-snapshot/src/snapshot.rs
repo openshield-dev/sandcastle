@@ -76,9 +76,13 @@ pub(crate) fn total_size(dir: &std::path::Path) -> Result<u64, std::io::Error> {
         let entry = entry?;
         let meta = entry.metadata()?;
         if meta.is_dir() {
-            total += total_size(&entry.path())?;
+            total = total.checked_add(total_size(&entry.path())?).ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "snapshot size overflow")
+            })?;
         } else {
-            total += meta.len();
+            total = total.checked_add(meta.len()).ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "snapshot size overflow")
+            })?;
         }
     }
     Ok(total)
@@ -94,9 +98,13 @@ pub(crate) fn count_files_in(dir: &std::path::Path) -> Result<u64, std::io::Erro
         let entry = entry?;
         let meta = entry.metadata()?;
         if meta.is_dir() {
-            count += count_files_in(&entry.path())?;
+            count = count.checked_add(count_files_in(&entry.path())?).ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "snapshot file count overflow")
+            })?;
         } else {
-            count += 1;
+            count = count.checked_add(1).ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "snapshot file count overflow")
+            })?;
         }
     }
     Ok(count)

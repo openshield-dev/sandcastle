@@ -13,13 +13,12 @@ pub fn execute(
     export: Option<&str>,
     file: Option<&str>,
 ) -> anyhow::Result<()> {
-    let log_path = file
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            std::env::current_dir()
-                .unwrap_or_default()
-                .join(".sandcastle/audit.log")
-        });
+    let log_path = match file {
+        Some(f) => std::path::PathBuf::from(f),
+        None => std::env::current_dir()
+            .context("Failed to determine current directory")?
+            .join(".sandcastle/audit.log"),
+    };
 
     if !log_path.exists() {
         println!(
@@ -34,11 +33,23 @@ pub fn execute(
         .with_context(|| format!("Failed to read audit log '{}'", log_path.display()))?;
 
     // Parse NDJSON — each line is one JSON-encoded AuditEvent.
-    let mut events: Vec<AuditEvent> = raw
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .filter_map(|line| serde_json::from_str(line).ok())
-        .collect();
+    let non_empty_lines: Vec<&str> = raw.lines().filter(|l| !l.trim().is_empty()).collect();
+    let total_lines = non_empty_lines.len();
+
+    let mut events: Vec<AuditEvent> = Vec::new();
+    let mut parse_failures: usize = 0;
+    for line in &non_empty_lines {
+        match serde_json::from_str::<AuditEvent>(line) {
+            Ok(event) => events.push(event),
+            Err(_) => parse_failures += 1,
+        }
+    }
+
+    if parse_failures > 0 {
+        eprintln!(
+            "Warning: {parse_failures} of {total_lines} lines could not be parsed"
+        );
+    }
 
     // Apply violations-only filter.
     if violations_only {

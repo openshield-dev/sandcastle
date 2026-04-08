@@ -259,14 +259,21 @@ fn collect_entries(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), FsError> {
 }
 
 /// Walk `root` and collect paths relative to `base`.
+/// Symlinks are skipped to prevent following links outside the sandbox.
 fn walk_relative(base: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), FsError> {
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
+        // Use symlink_metadata so we inspect the link itself, not its target.
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            warn!(path = %entry.path().display(), "walk_relative: skipping symlink");
+            continue;
+        }
         let path = entry.path();
         let rel = path.strip_prefix(base).map_err(|e| {
             FsError::OverlayError(format!("strip_prefix failed: {e}"))
         })?;
-        if path.is_dir() {
+        if file_type.is_dir() {
             walk_relative(base, &path, out)?;
         } else {
             out.push(rel.to_path_buf());
@@ -276,13 +283,20 @@ fn walk_relative(base: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), 
 }
 
 /// Recursively copy `src` directory into `dst`.
+/// Symlinks are skipped to prevent following links outside the sandbox.
 #[cfg(not(target_os = "linux"))]
 fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), FsError> {
     std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
+        // Use symlink_metadata so we inspect the link itself, not its target.
+        let meta = std::fs::symlink_metadata(entry.path())?;
+        if meta.file_type().is_symlink() {
+            warn!(path = %entry.path().display(), "copy_dir_all: skipping symlink");
+            continue;
+        }
         let target = dst.join(entry.file_name());
-        if entry.path().is_dir() {
+        if meta.is_dir() {
             copy_dir_all(&entry.path(), &target)?;
         } else {
             std::fs::copy(entry.path(), &target)?;

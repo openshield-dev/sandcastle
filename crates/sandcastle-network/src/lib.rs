@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Network isolation, egress filtering, and DNS control for SandCastle sandboxes.
 //!
 //! This crate provides:

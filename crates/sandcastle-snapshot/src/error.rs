@@ -11,6 +11,9 @@ pub enum SnapshotError {
     #[error("Snapshot already exists: {0}")]
     AlreadyExists(String),
 
+    #[error("Invalid snapshot name: {0}")]
+    InvalidName(String),
+
     #[error("Branch not found: {0}")]
     BranchNotFound(String),
 

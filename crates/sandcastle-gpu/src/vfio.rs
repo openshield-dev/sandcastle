@@ -18,11 +18,62 @@ pub struct VfioConfig {
 
 impl VfioConfig {
     /// Create a new VFIO config for the GPU at `pci_address`.
-    pub fn new(pci_address: String) -> Self {
-        Self {
+    ///
+    /// Returns an error if `pci_address` does not match the `DDDD:BB:DD.F`
+    /// format (e.g. `"0000:01:00.0"`), where each segment consists of
+    /// hexadecimal digits only.
+    pub fn new(pci_address: String) -> Result<Self, GpuError> {
+        Self::validate_pci_address(&pci_address)?;
+        Ok(Self {
             pci_address,
             iommu_group: None,
+        })
+    }
+
+    /// Validate that `addr` matches the PCI address format `DDDD:BB:DD.F`.
+    ///
+    /// Rules:
+    /// - Total length must be exactly 12 characters.
+    /// - Characters at positions 4 and 7 must be `':'`.
+    /// - Character at position 10 must be `'.'`.
+    /// - All other characters must be ASCII hexadecimal digits.
+    fn validate_pci_address(addr: &str) -> Result<(), GpuError> {
+        // Expected layout: "DDDD:BB:DD.F"  (0-indexed positions)
+        //  0123 4 56 7 89 10 11
+        //  DDDD : BB : DD .  F
+        if addr.len() != 12 {
+            return Err(GpuError::ConfigError(format!(
+                "PCI address must be exactly 12 characters (e.g. '0000:01:00.0'), got '{addr}'"
+            )));
         }
+        let bytes = addr.as_bytes();
+        for (i, &b) in bytes.iter().enumerate() {
+            match i {
+                4 | 7 => {
+                    if b != b':' {
+                        return Err(GpuError::ConfigError(format!(
+                            "PCI address must have ':' at position {i}, got '{addr}'"
+                        )));
+                    }
+                }
+                10 => {
+                    if b != b'.' {
+                        return Err(GpuError::ConfigError(format!(
+                            "PCI address must have '.' at position {i}, got '{addr}'"
+                        )));
+                    }
+                }
+                _ => {
+                    if !b.is_ascii_hexdigit() {
+                        return Err(GpuError::ConfigError(format!(
+                            "PCI address contains invalid character '{}' at position {i} in '{addr}'",
+                            b as char
+                        )));
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Return `true` if the `vfio-pci` kernel module is loaded on this system.

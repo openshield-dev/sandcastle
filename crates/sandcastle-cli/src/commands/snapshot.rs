@@ -2,6 +2,7 @@
 
 use anyhow::Context;
 use sandcastle_snapshot::{BranchManager, SnapshotDiff, SnapshotStore};
+use super::validate::validate_name;
 
 /// Default location of the snapshot store relative to the current directory.
 const STORE_DIR: &str = ".sandcastle/snapshots";
@@ -9,15 +10,16 @@ const STORE_DIR: &str = ".sandcastle/snapshots";
 /// Open (or create) the snapshot store in the current working directory.
 fn open_store() -> anyhow::Result<SnapshotStore> {
     let store_path = std::env::current_dir()
-        .unwrap_or_default()
+        .context("Failed to determine current directory")?
         .join(STORE_DIR);
     SnapshotStore::open(store_path).context("Failed to open snapshot store")
 }
 
 /// Create a new snapshot of the current working directory.
 pub fn create(name: &str, description: Option<&str>) -> anyhow::Result<()> {
+    validate_name(name)?;
     let mut store = open_store()?;
-    let source = std::env::current_dir().unwrap_or_default();
+    let source = std::env::current_dir().context("Failed to determine current directory")?;
 
     let meta = store
         .create(name, &source, description.map(str::to_owned))
@@ -65,16 +67,17 @@ pub fn list() -> anyhow::Result<()> {
 
 /// Show the diff between a snapshot and the current working directory.
 pub fn diff(name: &str) -> anyhow::Result<()> {
+    validate_name(name)?;
     let store = open_store()?;
     let meta = store
         .get(name)
         .with_context(|| format!("Snapshot '{name}' not found"))?;
 
     let store_root = std::env::current_dir()
-        .unwrap_or_default()
+        .context("Failed to determine current directory")?
         .join(STORE_DIR);
     let snapshot_data = store_root.join(meta.id.to_string());
-    let current = std::env::current_dir().unwrap_or_default();
+    let current = std::env::current_dir().context("Failed to determine current directory")?;
 
     let diff = SnapshotDiff::compare_with_current(&snapshot_data, &current)
         .context("Failed to compute diff")?;
@@ -101,8 +104,9 @@ pub fn diff(name: &str) -> anyhow::Result<()> {
 
 /// Restore a snapshot to the current working directory.
 pub fn restore(name: &str) -> anyhow::Result<()> {
+    validate_name(name)?;
     let store = open_store()?;
-    let target = std::env::current_dir().unwrap_or_default();
+    let target = std::env::current_dir().context("Failed to determine current directory")?;
 
     store
         .restore(name, &target)
@@ -114,6 +118,8 @@ pub fn restore(name: &str) -> anyhow::Result<()> {
 
 /// Create a branch from an existing snapshot.
 pub fn branch(source: &str, name: &str) -> anyhow::Result<()> {
+    validate_name(source)?;
+    validate_name(name)?;
     let mut store = open_store()?;
     let mut mgr = BranchManager::new(&mut store);
 

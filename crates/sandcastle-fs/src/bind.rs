@@ -114,12 +114,27 @@ impl BindMount {
         );
 
         // Remove any existing target so symlink creation succeeds.
-        if self.target.exists() || self.target.is_symlink() {
-            if self.target.is_dir() && !self.target.is_symlink() {
-                std::fs::remove_dir_all(&self.target).map_err(FsError::Io)?;
-            } else {
-                std::fs::remove_file(&self.target).map_err(FsError::Io)?;
+        //
+        // NOTE: There is an inherent TOCTOU race between checking the target's
+        // type and removing it — an attacker could swap the path between the
+        // metadata check and the removal.  We mitigate this by using
+        // symlink_metadata (which does not follow symlinks) and by operating
+        // inside a sandbox-owned directory that should not be writable by
+        // untrusted code.  A fully race-free solution would require OS-specific
+        // primitives (e.g. openat + unlinkat) which are not exposed by the
+        // Rust std library.
+        match std::fs::symlink_metadata(&self.target) {
+            Ok(meta) => {
+                if meta.is_dir() && !meta.file_type().is_symlink() {
+                    std::fs::remove_dir_all(&self.target).map_err(FsError::Io)?;
+                } else {
+                    std::fs::remove_file(&self.target).map_err(FsError::Io)?;
+                }
             }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // Target does not exist — nothing to remove.
+            }
+            Err(e) => return Err(FsError::Io(e)),
         }
 
         create_symlink(&self.source, &self.target).map_err(|e| FsError::MountFailed {

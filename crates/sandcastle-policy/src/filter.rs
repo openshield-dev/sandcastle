@@ -123,21 +123,14 @@ impl FilterGenerator {
                 detail: format!("throttle bandwidth={}", bw),
             });
         }
-        // If no domains are allowed, default-deny all outbound connections.
-        if permissions.network.allow_domains.is_empty() {
-            rules.push(FilterRule {
-                action: FilterAction::Deny,
-                subject: "network".into(),
-                detail: "deny domain=*".into(),
-            });
-        } else {
-            // Default-deny everything not on the allow list.
-            rules.push(FilterRule {
-                action: FilterAction::Deny,
-                subject: "network".into(),
-                detail: "deny domain=*".into(),
-            });
-        }
+        // Default-deny fallback: block any domain not explicitly allowed above.
+        // This is always emitted after per-domain allow rules, ensuring unlisted
+        // destinations are blocked regardless of whether the allow list is empty.
+        rules.push(FilterRule {
+            action: FilterAction::Deny,
+            subject: "network".into(),
+            detail: "deny domain=*".into(),
+        });
 
         // --- Process / exec rules -------------------------------------------
         for cmd in &permissions.processes.deny {

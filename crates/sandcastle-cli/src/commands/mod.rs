@@ -3,3 +3,4 @@ pub mod policy;
 pub mod profiles;
 pub mod run;
 pub mod snapshot;
+pub mod validate;

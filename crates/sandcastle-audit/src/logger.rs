@@ -35,11 +35,22 @@ pub struct FileAuditSink {
 
 impl FileAuditSink {
     /// Open (or create) the file at `path` for append-only writing.
+    ///
+    /// On Unix the file permissions are set to `0o600` (owner read/write only)
+    /// so that other users on the system cannot read sensitive audit data.
     pub fn new(path: PathBuf) -> Result<Self, AuditError> {
         let file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&path)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o600);
+            std::fs::set_permissions(&path, perms)?;
+        }
+
         Ok(Self {
             writer: Mutex::new(std::io::BufWriter::new(file)),
             path,
@@ -55,18 +66,18 @@ impl FileAuditSink {
 impl AuditSink for FileAuditSink {
     fn write_event(&self, event: &AuditEvent) -> Result<(), AuditError> {
         let line = serde_json::to_string(event)?;
-        let mut w = self
-            .writer
-            .lock()
-            .map_err(|e| AuditError::WriteError(e.to_string()))?;
+        let mut w = match self.writer.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
         writeln!(w, "{line}").map_err(AuditError::Io)
     }
 
     fn flush(&self) -> Result<(), AuditError> {
-        let mut w = self
-            .writer
-            .lock()
-            .map_err(|e| AuditError::WriteError(e.to_string()))?;
+        let mut w = match self.writer.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
         w.flush().map_err(AuditError::Io)
     }
 }
@@ -133,10 +144,33 @@ impl AuditSink for TracingAuditSink {
 /// let mut logger = AuditLogger::new();
 /// logger.add_sink(Box::new(StdoutAuditSink));
 /// ```
+/// Default maximum events allowed per minute before rate-limiting kicks in.
+const DEFAULT_MAX_EVENTS_PER_MINUTE: u64 = 10_000;
+
+/// Default maximum approximate file size in bytes (100 MB).
+const DEFAULT_MAX_FILE_SIZE_BYTES: u64 = 100_000_000;
+
+/// Average estimated size of a single serialised audit event (bytes).
+const AVG_EVENT_SIZE: u64 = 512;
+
 pub struct AuditLogger {
     sinks: Vec<Box<dyn AuditSink>>,
     event_count: u64,
     violation_count: u64,
+    /// Monotonically increasing sequence number included in every logged event.
+    sequence_number: u64,
+    /// Maximum events allowed per minute.
+    max_events_per_minute: u64,
+    /// Maximum approximate file size in bytes.
+    max_file_size_bytes: u64,
+    /// Event count within the current rate-limit window.
+    current_minute_count: u64,
+    /// Start of the current rate-limit window (Unix timestamp in seconds).
+    current_minute_start: u64,
+    /// Whether a rate-limit warning has already been emitted for this window.
+    rate_limit_warned: bool,
+    /// Whether a size-limit warning has already been emitted.
+    size_limit_warned: bool,
 }
 
 impl AuditLogger {
@@ -146,7 +180,24 @@ impl AuditLogger {
             sinks: Vec::new(),
             event_count: 0,
             violation_count: 0,
+            sequence_number: 0,
+            max_events_per_minute: DEFAULT_MAX_EVENTS_PER_MINUTE,
+            max_file_size_bytes: DEFAULT_MAX_FILE_SIZE_BYTES,
+            current_minute_count: 0,
+            current_minute_start: 0,
+            rate_limit_warned: false,
+            size_limit_warned: false,
         }
+    }
+
+    /// Set the maximum number of events allowed per minute.
+    pub fn set_max_events_per_minute(&mut self, max: u64) {
+        self.max_events_per_minute = max;
+    }
+
+    /// Set the maximum approximate file size in bytes.
+    pub fn set_max_file_size_bytes(&mut self, max: u64) {
+        self.max_file_size_bytes = max;
     }
 
     /// Register an additional sink.
@@ -156,13 +207,64 @@ impl AuditLogger {
 
     /// Submit an event to all registered sinks.
     ///
+    /// The event is enriched with a monotonic sequence number (`seq` field in
+    /// JSON output) so that consumers can detect gaps caused by deleted records.
+    ///
+    /// Rate-limiting and approximate size-limiting are enforced: when the limit
+    /// is hit a single warning is logged via `tracing` and subsequent events in
+    /// the same window are silently dropped.
+    ///
     /// Errors from individual sinks are collected; the first error encountered
     /// is returned after attempting every sink.
     pub fn log(&mut self, event: AuditEvent) -> Result<(), AuditError> {
-        if event.is_violation() {
-            self.violation_count += 1;
+        // --- Rate limiting (per-minute window) ---
+        let now_secs = event.timestamp.timestamp() as u64;
+        if now_secs / 60 != self.current_minute_start / 60 {
+            // New minute window — reset counters.
+            self.current_minute_start = now_secs;
+            self.current_minute_count = 0;
+            self.rate_limit_warned = false;
         }
-        self.event_count += 1;
+        self.current_minute_count = self.current_minute_count.saturating_add(1);
+        if self.current_minute_count > self.max_events_per_minute {
+            if !self.rate_limit_warned {
+                tracing::warn!(
+                    "audit rate limit exceeded ({} events/min) — dropping events",
+                    self.max_events_per_minute,
+                );
+                self.rate_limit_warned = true;
+            }
+            return Ok(());
+        }
+
+        // --- Approximate size limiting ---
+        let approx_size = self.event_count.saturating_mul(AVG_EVENT_SIZE);
+        if approx_size >= self.max_file_size_bytes {
+            if !self.size_limit_warned {
+                tracing::warn!(
+                    "audit log approximate size limit reached ({} bytes) — dropping events",
+                    self.max_file_size_bytes,
+                );
+                self.size_limit_warned = true;
+            }
+            return Ok(());
+        }
+
+        // --- Assign sequence number ---
+        let seq = self.sequence_number;
+        self.sequence_number = self.sequence_number.saturating_add(1);
+
+        // --- Build the enriched JSON value with sequence number ---
+        let mut value = serde_json::to_value(&event)?;
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert("seq".to_owned(), serde_json::Value::from(seq));
+        }
+
+        // --- Update counters (saturating to prevent overflow) ---
+        if event.is_violation() {
+            self.violation_count = self.violation_count.saturating_add(1);
+        }
+        self.event_count = self.event_count.saturating_add(1);
 
         let mut first_error: Option<AuditError> = None;
         for sink in &self.sinks {
@@ -177,6 +279,11 @@ impl AuditLogger {
             Some(e) => Err(e),
             None => Ok(()),
         }
+    }
+
+    /// Return the current sequence number (next event will receive this value).
+    pub fn sequence_number(&self) -> u64 {
+        self.sequence_number
     }
 
     /// Total number of events logged (including violations).

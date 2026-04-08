@@ -60,7 +60,7 @@ impl ProfileResolver {
                     }
                     Ok(_) => {} // name doesn't match, keep looking
                     Err(e) => {
-                        tracing::warn!(
+                        tracing::error!(
                             path = %candidate.display(),
                             error = %e,
                             "Skipping unreadable profile file"
@@ -95,8 +95,17 @@ impl ProfileResolver {
     /// ```
     pub fn auto_detect(command: &str) -> Option<BuiltinProfile> {
         let lower = command.to_lowercase();
+        // Extract the binary name from the command: take the first whitespace-
+        // delimited token (the executable path), then grab the last path component
+        // (after `/` or `\`). This prevents paths like `/tmp/malicious-claude-worm`
+        // from matching the "claude" needle via a naive `contains` check.
+        let exe_token = lower.split_whitespace().next().unwrap_or(&lower);
+        let binary_name = exe_token
+            .rsplit(|c: char| c == '/' || c == '\\')
+            .next()
+            .unwrap_or(exe_token);
         for (needle, profile) in COMMAND_MAP {
-            if lower.contains(needle) {
+            if binary_name == *needle || binary_name.starts_with(&format!("{}.", needle)) {
                 return Some(profile.clone());
             }
         }

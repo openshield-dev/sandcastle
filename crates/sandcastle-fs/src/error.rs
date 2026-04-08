@@ -11,6 +11,9 @@ pub enum FsError {
     #[error("path not allowed: {0}")]
     PathDenied(PathBuf),
 
+    #[error("path traversal attempt blocked: {0}")]
+    PathTraversal(PathBuf),
+
     #[error("overlay setup failed: {0}")]
     OverlayError(String),
 

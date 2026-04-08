@@ -113,7 +113,10 @@ impl DomainAllowlist {
 /// Match `domain` against a simple glob `pattern`.
 ///
 /// - `"*"` matches any domain.
-/// - `"*.example.com"` matches any direct subdomain of `example.com`.
+/// - `"*.example.com"` matches any direct subdomain of `example.com` at the
+///   label level — i.e., only domains whose trailing labels exactly equal
+///   `example.com`.  This prevents bypass attacks like `evil.com.example.com`
+///   matching a pattern for `*.com`.
 /// - All other patterns are exact (case-insensitive) comparisons.
 fn glob_match(pattern: &str, domain: &str) -> bool {
     if pattern == "*" {
@@ -122,8 +125,22 @@ fn glob_match(pattern: &str, domain: &str) -> bool {
     let p = pattern.to_lowercase();
     let d = domain.to_lowercase();
     if let Some(suffix) = p.strip_prefix("*.") {
-        // `*.example.com` matches subdomains only, not `example.com` itself.
-        d.ends_with(&format!(".{suffix}"))
+        // Split both into DNS labels and compare at the label level.
+        // `*.example.com` has suffix labels ["example", "com"].
+        // The domain must have strictly more labels, and its trailing labels
+        // must equal the suffix labels exactly — preventing string-suffix
+        // tricks like `evil.com.example.com` matching `*.com`.
+        let suffix_labels: Vec<&str> = suffix.split('.').collect();
+        let domain_labels: Vec<&str> = d.split('.').collect();
+
+        // Domain must have exactly one more label than the suffix so that
+        // `*.example.com` matches `api.example.com` but NOT `a.b.example.com`.
+        if domain_labels.len() != suffix_labels.len() + 1 {
+            return false;
+        }
+
+        let trailing = &domain_labels[domain_labels.len() - suffix_labels.len()..];
+        trailing == suffix_labels.as_slice()
     } else {
         p == d
     }

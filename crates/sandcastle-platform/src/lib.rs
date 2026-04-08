@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 //! Platform-specific OS isolation primitives for SandCastle.
 //!
 //! On Linux this crate wraps kernel namespaces, Landlock LSM, seccomp-BPF

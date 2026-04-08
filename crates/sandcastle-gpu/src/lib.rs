@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! GPU passthrough management for SandCastle AI agent sandboxes.
 //!
 //! Supports three isolation techniques:

@@ -5,12 +5,13 @@ use serde::{Deserialize, Serialize};
 /// Trust levels for sandbox profiles, ordered from most restrictive to least.
 ///
 /// Ordering: Explore < Develop < Build < Full < Unrestricted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TrustLevel {
     /// Read-only access to the project directory. No network, no process execution.
     Explore,
     /// Project directory read/write, home read-only, allowlisted domains. No shell. Default.
+    #[default]
     Develop,
     /// Project + dep dirs r/w, package registries + API endpoints, build tools, GPU.
     Build,
@@ -18,12 +19,6 @@ pub enum TrustLevel {
     Full,
     /// Everything allowed. Use only in fully isolated, ephemeral environments.
     Unrestricted,
-}
-
-impl Default for TrustLevel {
-    fn default() -> Self {
-        TrustLevel::Develop
-    }
 }
 
 impl TrustLevel {
@@ -89,7 +84,11 @@ impl TrustLevel {
                         "pypi.org".into(),
                         "*.pypi.org".into(),
                     ],
-                    deny_domains: vec![],
+                    deny_domains: vec![
+                        "169.254.169.254".into(), // AWS/GCP metadata
+                        "metadata.google.internal".into(), // GCP metadata
+                        "metadata.internal".into(),
+                    ],
                     max_bandwidth: Some("50Mbps".into()),
                 },
                 processes: ProcessPermissions {
@@ -179,7 +178,11 @@ impl TrustLevel {
                         "hub.docker.com".into(),
                         "registry-1.docker.io".into(),
                     ],
-                    deny_domains: vec![],
+                    deny_domains: vec![
+                        "169.254.169.254".into(), // AWS/GCP metadata
+                        "metadata.google.internal".into(), // GCP metadata
+                        "metadata.internal".into(),
+                    ],
                     max_bandwidth: Some("200Mbps".into()),
                 },
                 processes: ProcessPermissions {

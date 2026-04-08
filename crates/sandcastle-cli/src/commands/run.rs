@@ -5,6 +5,27 @@ use sandcastle_audit::AuditLogger;
 use sandcastle_platform::{create_sandbox, SandboxConfig};
 use sandcastle_policy::resolver::ProfileResolver;
 
+/// Returns `true` when `value` matches any entry in `deny_patterns`.
+///
+/// Supports simple glob patterns: `*` alone matches everything, a leading `*`
+/// matches any prefix, a trailing `*` matches any suffix, and patterns with a
+/// single interior `*` match a prefix + suffix pair. Literal strings are
+/// compared with exact equality.
+fn matches_deny_list<'a>(value: &str, deny_patterns: &'a [String]) -> Option<&'a String> {
+    deny_patterns.iter().find(|pattern| {
+        let pat = pattern.as_str();
+        if pat == "*" {
+            return true;
+        }
+        if pat.contains('*') {
+            let parts: Vec<&str> = pat.splitn(2, '*').collect();
+            let (prefix, suffix) = (parts[0], parts[1]);
+            return value.starts_with(prefix) && value.ends_with(suffix);
+        }
+        value == pat
+    })
+}
+
 /// Execute the `sandcastle run` command.
 ///
 /// Resolves the named profile, applies CLI overrides, builds a [`SandboxConfig`],
@@ -18,21 +39,48 @@ pub fn execute(
     mode: &str,
     command: &[String],
 ) -> anyhow::Result<()> {
+    // 0. Validate CLI inputs.
+    super::validate::validate_mode(mode)?;
+
+    for dir in allow_dirs {
+        super::validate::validate_allow_dir(dir)?;
+        // Reject --allow-dir entries that overlap with the profile's deny list.
+    }
+    for domain in allow_net {
+        super::validate::validate_allow_domain(domain)?;
+    }
+
     // 1. Resolve profile using the policy resolver.
     let resolver = ProfileResolver::new(vec![
-        std::env::current_dir().unwrap_or_default(),
+        std::env::current_dir().context("Failed to determine current directory")?,
     ]);
 
     let mut sandbox_profile = resolver
         .resolve(profile)
         .with_context(|| format!("Unknown profile '{}'. Run `sandcastle profiles list` to see available profiles.", profile))?;
 
-    // 2. Apply CLI overrides.
+    // Check that --allow-dir entries don't conflict with the profile's deny list.
+    let fs_deny = &sandbox_profile.permissions.filesystem.deny;
     for dir in allow_dirs {
+        if let Some(denied) = matches_deny_list(dir, fs_deny) {
+            eprintln!(
+                "sandcastle: warning: --allow-dir '{}' matches denied filesystem pattern '{}' in profile '{}' — skipping",
+                dir, denied, sandbox_profile.name
+            );
+            continue;
+        }
         sandbox_profile.permissions.filesystem.allow_read.push(dir.clone());
         sandbox_profile.permissions.filesystem.allow_write.push(dir.clone());
     }
+    let net_deny = &sandbox_profile.permissions.network.deny_domains;
     for domain in allow_net {
+        if let Some(denied) = matches_deny_list(domain, net_deny) {
+            eprintln!(
+                "sandcastle: warning: --allow-net '{}' matches denied network pattern '{}' in profile '{}' — skipping",
+                domain, denied, sandbox_profile.name
+            );
+            continue;
+        }
         sandbox_profile.permissions.network.allow_domains.push(domain.clone());
     }
     if allow_gpu {
@@ -49,7 +97,7 @@ pub fn execute(
     // 4. Build sandbox config.
     let config = SandboxConfig {
         profile: sandbox_profile.clone(),
-        working_dir: std::env::current_dir().unwrap_or_default(),
+        working_dir: std::env::current_dir().context("Failed to determine current directory")?,
         command: bin.clone(),
         args: args.to_vec(),
         env: std::env::vars().collect(),

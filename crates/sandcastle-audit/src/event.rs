@@ -5,6 +5,27 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Maximum length for user-controlled strings interpolated into log descriptions.
+const MAX_LOG_STRING_LEN: usize = 4096;
+
+/// Sanitize a user-controlled string before interpolating it into a log description.
+///
+/// - Replaces `\n` and `\r` with spaces to prevent log injection / forging.
+/// - Strips null bytes.
+/// - Truncates to [`MAX_LOG_STRING_LEN`] characters.
+pub fn sanitize_log_string(s: &str) -> String {
+    let sanitized: String = s
+        .chars()
+        .filter(|&c| c != '\0')
+        .map(|c| match c {
+            '\n' | '\r' => ' ',
+            other => other,
+        })
+        .take(MAX_LOG_STRING_LEN)
+        .collect();
+    sanitized
+}
+
 /// Fine-grained event type for every sandboxed action.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -133,7 +154,7 @@ impl ActionDetail {
 }
 
 /// Session-level context attached to every event.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EventContext {
     /// Policy profile active during the event.
     pub profile: Option<String>,
@@ -143,17 +164,6 @@ pub struct EventContext {
     pub session_action_count: u64,
     /// Name of the agent that triggered the event.
     pub agent_name: Option<String>,
-}
-
-impl Default for EventContext {
-    fn default() -> Self {
-        Self {
-            profile: None,
-            trust_level: None,
-            session_action_count: 0,
-            agent_name: None,
-        }
-    }
 }
 
 /// A single immutable audit record produced by the sandbox.
@@ -210,7 +220,8 @@ impl AuditEvent {
         path: String,
         decision: PolicyDecision,
     ) -> Self {
-        let description = format!("{event_type} {path}");
+        let safe_path = sanitize_log_string(&path);
+        let description = format!("{event_type} {safe_path}");
         Self::new(
             sandbox_id,
             session_id,
@@ -234,7 +245,8 @@ impl AuditEvent {
         domain: String,
         decision: PolicyDecision,
     ) -> Self {
-        let description = format!("network_connect {domain}");
+        let safe_domain = sanitize_log_string(&domain);
+        let description = format!("network_connect {safe_domain}");
         Self::new(
             sandbox_id,
             session_id,
@@ -258,7 +270,8 @@ impl AuditEvent {
         command: String,
         decision: PolicyDecision,
     ) -> Self {
-        let description = format!("process_exec {command}");
+        let safe_command = sanitize_log_string(&command);
+        let description = format!("process_exec {safe_command}");
         Self::new(
             sandbox_id,
             session_id,

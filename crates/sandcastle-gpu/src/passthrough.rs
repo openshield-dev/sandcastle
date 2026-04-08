@@ -1,9 +1,22 @@
 //! GPU passthrough orchestrator — routes setup/teardown to the correct backend.
 
+use std::collections::HashSet;
+use std::sync::{LazyLock, Mutex};
+
 use crate::{
     detect::{GpuInfo, PassthroughMethod},
     error::GpuError,
 };
+
+/// Maximum number of GPU devices a single sandbox may request.
+const MAX_GPU_DEVICES: usize = 16;
+
+/// Maximum per-device memory limit in MB (~1 TB).
+const MAX_MEMORY_LIMIT_MB: u64 = 1_000_000;
+
+/// Tracks which device indices are currently allocated across all sandboxes.
+static ALLOCATED_DEVICES: LazyLock<Mutex<HashSet<u32>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
 
 /// Configuration for GPU passthrough in a sandbox.
 #[derive(Debug, Clone)]
@@ -30,13 +43,32 @@ impl GpuPassthrough {
     /// Create a new passthrough manager. Validates configuration but does not
     /// activate passthrough until [`setup`] is called.
     pub fn new(config: GpuPassthroughConfig) -> Result<Self, GpuError> {
+        // Validate device count.
+        if config.device_indices.len() > MAX_GPU_DEVICES {
+            return Err(GpuError::ConfigError(format!(
+                "too many GPU devices requested ({}, max {MAX_GPU_DEVICES})",
+                config.device_indices.len()
+            )));
+        }
+
+        // Validate compute_limit (NaN and range).
         if let Some(frac) = config.compute_limit {
-            if !(0.0..=1.0).contains(&frac) {
+            if frac.is_nan() || !(0.0..=1.0).contains(&frac) {
                 return Err(GpuError::ConfigError(format!(
                     "compute_limit must be between 0.0 and 1.0, got {frac}"
                 )));
             }
         }
+
+        // Validate memory_limit.
+        if let Some(mem) = config.memory_limit {
+            if mem == 0 || mem > MAX_MEMORY_LIMIT_MB {
+                return Err(GpuError::ConfigError(format!(
+                    "memory_limit must be between 1 and {MAX_MEMORY_LIMIT_MB} MB, got {mem}"
+                )));
+            }
+        }
+
         Ok(Self {
             config,
             gpus: vec![],
@@ -45,13 +77,42 @@ impl GpuPassthrough {
     }
 
     /// Set up GPU passthrough using the configured method.
+    ///
+    /// Returns [`GpuError::AlreadyInUse`] if any of the requested device
+    /// indices are currently allocated to another sandbox.
     pub fn setup(&mut self) -> Result<(), GpuError> {
-        match self.config.method {
+        // Acquire the global allocation lock and check for conflicts.
+        let mut allocated = ALLOCATED_DEVICES
+            .lock()
+            .expect("ALLOCATED_DEVICES mutex poisoned");
+
+        for &idx in &self.config.device_indices {
+            if allocated.contains(&idx) {
+                return Err(GpuError::AlreadyInUse);
+            }
+        }
+
+        // Reserve all requested devices before performing backend setup.
+        for &idx in &self.config.device_indices {
+            allocated.insert(idx);
+        }
+
+        // Release the lock before the (potentially slow) backend call.
+        drop(allocated);
+
+        let result = match self.config.method {
             PassthroughMethod::NvProxy => self.setup_nvproxy(),
             PassthroughMethod::Vfio => self.setup_vfio(),
             PassthroughMethod::GpuPv => self.setup_gpu_pv(),
             PassthroughMethod::Direct => self.setup_direct(),
+        };
+
+        // If backend setup failed, release the reserved devices.
+        if result.is_err() {
+            Self::release_devices(&self.config.device_indices);
         }
+
+        result
     }
 
     /// Tear down GPU passthrough and release any resources.
@@ -65,8 +126,19 @@ impl GpuPassthrough {
             devices = ?self.config.device_indices,
             "Tearing down GPU passthrough (stub)"
         );
+        Self::release_devices(&self.config.device_indices);
         self.active = false;
         Ok(())
+    }
+
+    /// Remove `indices` from the global allocation set.
+    fn release_devices(indices: &[u32]) {
+        let mut allocated = ALLOCATED_DEVICES
+            .lock()
+            .expect("ALLOCATED_DEVICES mutex poisoned");
+        for idx in indices {
+            allocated.remove(idx);
+        }
     }
 
     // ── private backend stubs ────────────────────────────────────────────────
@@ -107,5 +179,20 @@ impl GpuPassthrough {
         );
         self.active = true;
         Ok(())
+    }
+}
+
+impl Drop for GpuPassthrough {
+    fn drop(&mut self) {
+        if self.active {
+            tracing::warn!(
+                method = ?self.config.method,
+                devices = ?self.config.device_indices,
+                "GpuPassthrough dropped while still active — running teardown"
+            );
+            if let Err(e) = self.teardown() {
+                tracing::error!(error = %e, "teardown failed during drop");
+            }
+        }
     }
 }

@@ -125,6 +125,7 @@ impl Sandbox for LinuxSandbox {
 /// Real implementation will use the `landlock` crate once the feature gate is
 /// stabilised.
 fn apply_landlock(profile: &SandboxProfile) -> Result<(), PlatformError> {
+    warn!("STUB: Landlock filesystem isolation is NOT actually enforced — the process has unrestricted filesystem access");
     let fs = &profile.permissions.filesystem;
     debug!(
         allow_read = ?fs.allow_read,
@@ -147,6 +148,7 @@ fn apply_landlock(profile: &SandboxProfile) -> Result<(), PlatformError> {
 /// will use the `seccomp` crate and generate a deny-all-then-allowlist policy
 /// based on `profile.trust_level`.
 fn apply_seccomp(profile: &SandboxProfile) -> Result<(), PlatformError> {
+    warn!("STUB: seccomp-BPF syscall filtering is NOT actually enforced — all syscalls are permitted");
     debug!(
         trust_level = ?profile.trust_level,
         "seccomp: would load BPF filter for trust level (stub)"
@@ -171,6 +173,7 @@ fn apply_seccomp(profile: &SandboxProfile) -> Result<(), PlatformError> {
 /// Created with `clone(2)` or `unshare(2)` (from the `nix` crate when compiled
 /// on Linux).  The stub logs the flags that *would* be passed.
 fn setup_namespaces(config: &SandboxConfig) -> Result<(), PlatformError> {
+    warn!("STUB: Linux namespace isolation is NOT actually enforced — process runs in the host namespace");
     let net_allowed = !config.profile.permissions.network.allow_domains.is_empty();
     debug!(
         network_isolated = !net_allowed,
@@ -191,6 +194,7 @@ fn setup_namespaces(config: &SandboxConfig) -> Result<(), PlatformError> {
 ///
 /// The stub logs the limits that *would* be written to the cgroup hierarchy.
 fn apply_cgroups(limits: &ResourceLimits) -> Result<(), PlatformError> {
+    warn!("STUB: cgroup-v2 resource limits are NOT actually enforced — process has unrestricted resource access");
     debug!(
         max_memory = ?limits.max_memory,
         max_cpu = ?limits.max_cpu,

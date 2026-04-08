@@ -50,8 +50,6 @@ impl FsIsolation {
         let mut binds = BindMountSet::new();
         let mut tmpfs_mounts: Vec<TmpfsMount> = Vec::new();
         let mut overlay: Option<OverlayMount> = None;
-        let mut cow: Option<CowDirectory> = None;
-
         // For each writable path in the policy we set up an OverlayFS so the
         // sandbox gets a mutable view without touching the host filesystem.
         // For the first writable path we create a full overlay; subsequent
@@ -100,7 +98,7 @@ impl FsIsolation {
 
         // Set up a CoW directory over the sandbox root for tracking writes.
         let cow_dir = sandbox_root.join("cow");
-        cow = Some(CowDirectory::new(sandbox_root.clone(), cow_dir)?);
+        let cow = Some(CowDirectory::new(sandbox_root.clone(), cow_dir)?);
 
         info!(
             sandbox_root = %sandbox_root.display(),
@@ -237,6 +235,11 @@ fn glob_match(pattern: &str, text: &str) -> bool {
 }
 
 fn glob_match_simple(pattern: &str, text: &str) -> bool {
+    // Normalize the text path by resolving `..` components lexically so that
+    // patterns cannot be bypassed via path traversal sequences.
+    let normalized = lexical_normalize_path(text);
+    let text: &str = &normalized;
+
     // Handle wildcard-everything patterns.
     if pattern == "*" || pattern == "**" {
         return true;
@@ -261,6 +264,29 @@ fn glob_match_simple(pattern: &str, text: &str) -> bool {
 
     // Exact match.
     text == pattern
+}
+
+/// Resolve `..` and `.` components in a path string lexically, without
+/// touching the filesystem.  Keeps the leading `/` for absolute paths.
+fn lexical_normalize_path(text: &str) -> String {
+    use std::path::Component;
+    let path = std::path::Path::new(text);
+    let mut parts: Vec<std::ffi::OsString> = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::ParentDir => {
+                // Only pop a Normal segment; never remove root or prefix.
+                if matches!(parts.last().and_then(|s: &std::ffi::OsString| {
+                    std::path::Path::new(s).components().next()
+                }), Some(Component::Normal(_))) {
+                    parts.pop();
+                }
+            }
+            Component::CurDir => {}
+            other => parts.push(other.as_os_str().to_owned()),
+        }
+    }
+    parts.iter().collect::<std::path::PathBuf>().to_string_lossy().into_owned()
 }
 
 /// Parse a human-readable size string like "10GB" into bytes.

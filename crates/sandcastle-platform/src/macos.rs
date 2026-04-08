@@ -125,16 +125,39 @@ fn generate_sandbox_profile(profile: &SandboxProfile) -> Result<String, Platform
     let mut sbpl = String::from("(version 1)\n(deny default)\n");
 
     for path in &profile.permissions.filesystem.allow_read {
-        sbpl.push_str(&format!("(allow file-read* (subpath \"{path}\"))\n"));
+        let escaped = escape_sbpl_path(path)?;
+        sbpl.push_str(&format!("(allow file-read* (subpath \"{escaped}\"))\n"));
     }
     for path in &profile.permissions.filesystem.allow_write {
-        sbpl.push_str(&format!("(allow file-write* (subpath \"{path}\"))\n"));
+        let escaped = escape_sbpl_path(path)?;
+        sbpl.push_str(&format!("(allow file-write* (subpath \"{escaped}\"))\n"));
     }
     if !profile.permissions.network.allow_domains.is_empty() {
         sbpl.push_str("(allow network-outbound)\n");
     }
 
     Ok(sbpl)
+}
+
+/// Sanitise a file path before interpolating it into an SBPL string literal.
+///
+/// SBPL uses a Scheme-like syntax where `"` terminates a string, `(` and `)`
+/// delimit S-expressions, and `\` is the escape character.  Newlines and null
+/// bytes could alter the profile semantics.  This function rejects paths that
+/// contain any of these dangerous characters rather than trying to escape them,
+/// because macOS `sandbox-exec` does not document a reliable escaping scheme.
+fn escape_sbpl_path(path: &str) -> Result<String, PlatformError> {
+    for ch in path.chars() {
+        match ch {
+            '"' | '(' | ')' | '\\' | '\n' | '\r' | '\0' => {
+                return Err(PlatformError::CreateFailed(format!(
+                    "SBPL path contains forbidden character {ch:?}: {path}"
+                )));
+            }
+            _ => {}
+        }
+    }
+    Ok(path.to_string())
 }
 
 /// Register an Endpoint Security client for the sandbox.

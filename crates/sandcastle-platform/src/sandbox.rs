@@ -25,17 +25,24 @@ pub struct SandboxConfig {
 }
 
 impl SandboxConfig {
-    /// Create a minimal config for the given command using the default profile
-    pub fn simple(command: impl Into<String>) -> Self {
-        Self {
+    /// Create a minimal config for the given command using the default profile.
+    ///
+    /// Returns an error if the current working directory cannot be determined.
+    pub fn simple(command: impl Into<String>) -> Result<Self, crate::error::PlatformError> {
+        let working_dir = std::env::current_dir().map_err(|e| {
+            crate::error::PlatformError::CreateFailed(format!(
+                "cannot determine current directory: {e}"
+            ))
+        })?;
+        Ok(Self {
             profile: SandboxProfile::default(),
-            working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            working_dir,
             command: command.into(),
             args: Vec::new(),
             env: Vec::new(),
             interactive: false,
             audit_mode: false,
-        }
+        })
     }
 }
 
@@ -101,7 +108,7 @@ pub fn create_sandbox(config: SandboxConfig) -> Result<Box<dyn Sandbox>, Platfor
     #[cfg(target_os = "windows")]
     {
         use crate::windows::WindowsSandbox;
-        return Ok(Box::new(WindowsSandbox::create(config)?));
+        Ok(Box::new(WindowsSandbox::create(config)?))
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]

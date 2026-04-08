@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Structured audit logging and event recording for all SandCastle sandbox operations.
 //!
 //! Every action taken by or on behalf of a sandboxed agent — file access, network

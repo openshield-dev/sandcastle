@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::error::SnapshotError;
@@ -67,6 +67,8 @@ impl SnapshotStore {
         parent: Option<Uuid>,
         branch: Option<String>,
     ) -> Result<SnapshotMetadata, SnapshotError> {
+        validate_name(name)?;
+
         if self.name_index.contains_key(name) {
             return Err(SnapshotError::AlreadyExists(name.to_owned()));
         }
@@ -78,17 +80,35 @@ impl SnapshotStore {
         let data_path = self.store_root.join(snapshot.metadata.id.to_string());
         snapshot.data_path = data_path.clone();
 
-        // Copy the source tree into the snapshot directory.
-        copy_dir_all(source_dir, &data_path).map_err(|e| {
-            SnapshotError::StorageError(format!(
-                "failed to copy '{}' to snapshot dir: {e}",
-                source_dir.display()
-            ))
-        })?;
+        // Copy the source tree and compute stats, cleaning up on failure.
+        let result = (|| -> Result<(), SnapshotError> {
+            // Copy the source tree into the snapshot directory.
+            copy_dir_all(source_dir, &data_path).map_err(|e| {
+                SnapshotError::StorageError(format!(
+                    "failed to copy '{}' to snapshot dir: {e}",
+                    source_dir.display()
+                ))
+            })?;
 
-        // Compute stats after the copy.
-        snapshot.metadata.size_bytes = total_size(&data_path).unwrap_or(0);
-        snapshot.metadata.file_count = count_files_in(&data_path).unwrap_or(0);
+            // Compute stats after the copy.
+            snapshot.metadata.size_bytes = total_size(&data_path).map_err(|e| {
+                SnapshotError::StorageError(format!(
+                    "failed to compute snapshot size: {e}"
+                ))
+            })?;
+            snapshot.metadata.file_count = count_files_in(&data_path).map_err(|e| {
+                SnapshotError::StorageError(format!(
+                    "failed to count snapshot files: {e}"
+                ))
+            })?;
+
+            Ok(())
+        })();
+
+        if result.is_err() {
+            let _ = std::fs::remove_dir_all(&data_path);
+            return Err(result.unwrap_err());
+        }
 
         info!(
             name = %name,
@@ -110,8 +130,12 @@ impl SnapshotStore {
     /// Restore a snapshot to `target_dir`.
     ///
     /// `target_dir` is created if it does not exist; any existing contents
-    /// are replaced by the snapshot's file tree.
+    /// are replaced by the snapshot's file tree.  Uses an atomic swap so
+    /// that a failed copy does not leave the target in a partially-deleted
+    /// state.
     pub fn restore(&self, name: &str, target_dir: &Path) -> Result<(), SnapshotError> {
+        validate_name(name)?;
+
         let meta = self.get(name)?;
         let data_path = self.store_root.join(meta.id.to_string());
 
@@ -123,22 +147,50 @@ impl SnapshotStore {
             )));
         }
 
-        // Clear target before restore so deleted files are not left behind.
+        // Copy into a temporary directory next to the target first so a
+        // failure never destroys the existing contents.
+        let target_parent = target_dir.parent().unwrap_or(Path::new("."));
+        let temp_dir = target_parent.join(format!(
+            ".sandcastle-restore-{}",
+            Uuid::new_v4()
+        ));
+        let bak_dir = target_parent.join(format!(
+            ".sandcastle-bak-{}",
+            Uuid::new_v4()
+        ));
+
+        copy_dir_all(&data_path, &temp_dir).map_err(|e| {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+            SnapshotError::RestoreFailed(format!(
+                "failed to copy snapshot data to temp dir: {e}"
+            ))
+        })?;
+
+        // Swap: move old target to backup, move temp to target.
         if target_dir.exists() {
-            std::fs::remove_dir_all(target_dir).map_err(|e| {
+            std::fs::rename(target_dir, &bak_dir).map_err(|e| {
+                let _ = std::fs::remove_dir_all(&temp_dir);
                 SnapshotError::RestoreFailed(format!(
-                    "failed to clear target dir '{}': {e}",
-                    target_dir.display()
+                    "failed to move target dir to backup: {e}"
                 ))
             })?;
         }
 
-        copy_dir_all(&data_path, target_dir).map_err(|e| {
-            SnapshotError::RestoreFailed(format!(
-                "failed to copy snapshot data to '{}': {e}",
-                target_dir.display()
-            ))
-        })?;
+        if let Err(e) = std::fs::rename(&temp_dir, target_dir) {
+            // Restore the backup if the rename fails.
+            if bak_dir.exists() {
+                let _ = std::fs::rename(&bak_dir, target_dir);
+            }
+            let _ = std::fs::remove_dir_all(&temp_dir);
+            return Err(SnapshotError::RestoreFailed(format!(
+                "failed to move restored snapshot to target: {e}"
+            )));
+        }
+
+        // Clean up the backup directory.
+        if bak_dir.exists() {
+            let _ = std::fs::remove_dir_all(&bak_dir);
+        }
 
         info!(name = %name, target = %target_dir.display(), "snapshot restored");
         Ok(())
@@ -176,6 +228,8 @@ impl SnapshotStore {
 
     /// Delete a snapshot from the store, removing its data directory.
     pub fn delete(&mut self, name: &str) -> Result<(), SnapshotError> {
+        validate_name(name)?;
+
         let id = self
             .name_index
             .remove(name)
@@ -236,16 +290,53 @@ impl SnapshotStore {
 // Internal filesystem helpers
 // ---------------------------------------------------------------------------
 
+/// Validate a snapshot name, rejecting path traversal, empty names, and
+/// non-portable characters.
+fn validate_name(name: &str) -> Result<(), SnapshotError> {
+    if name.is_empty() {
+        return Err(SnapshotError::InvalidName(
+            "name must not be empty".to_owned(),
+        ));
+    }
+    if name.len() > 255 {
+        return Err(SnapshotError::InvalidName(
+            "name must not exceed 255 characters".to_owned(),
+        ));
+    }
+    if name.contains('/') || name.contains('\\') || name.contains("..") || name.contains('\0') {
+        return Err(SnapshotError::InvalidName(
+            "name must not contain '/', '\\', '..', or null bytes".to_owned(),
+        ));
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
+        return Err(SnapshotError::InvalidName(
+            "name may only contain alphanumeric characters, hyphens, underscores, and dots"
+                .to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 /// Recursively copy the entire directory tree from `src` into `dst`.
 ///
 /// `dst` and any intermediate directories are created automatically.
+/// Symlinks are skipped to prevent path-traversal attacks.
 fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), std::io::Error> {
     std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
-        let meta = entry.metadata()?;
+        let meta = std::fs::symlink_metadata(&src_path)?;
+
+        if meta.file_type().is_symlink() {
+            warn!("Skipping symlink: {}", src_path.display());
+            continue;
+        }
+
         if meta.is_dir() {
             copy_dir_all(&src_path, &dst_path)?;
         } else {

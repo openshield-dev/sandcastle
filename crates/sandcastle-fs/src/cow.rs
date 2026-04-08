@@ -7,11 +7,38 @@
 
 use std::{
     collections::HashSet,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 use tracing::debug;
 
 use crate::error::FsError;
+
+/// Reject paths that could escape the sandbox base directory.
+///
+/// Rejects:
+/// - Absolute paths (starting with `/`, `\`, or a Windows drive letter like `C:`)
+/// - Paths containing `..` components
+/// - Paths containing null bytes
+fn validate_relative_path(path: &Path) -> Result<(), FsError> {
+    let path_str = path.to_string_lossy();
+
+    // Reject null bytes — these can be used to trick path-handling code.
+    if path_str.contains('\0') {
+        return Err(FsError::PathTraversal(path.to_path_buf()));
+    }
+
+    for component in path.components() {
+        match component {
+            // Any absolute root, prefix (Windows drive letter), or `..` is rejected.
+            Component::RootDir | Component::Prefix(_) | Component::ParentDir => {
+                return Err(FsError::PathTraversal(path.to_path_buf()));
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
 
 /// Type of change recorded in a [`CowChange`].
 #[derive(Debug, Clone)]
@@ -61,6 +88,7 @@ impl CowDirectory {
     /// Read a file.  Returns the CoW copy if one exists, otherwise falls back
     /// to the original in `source`.
     pub fn read(&self, relative_path: &Path) -> Result<Vec<u8>, FsError> {
+        validate_relative_path(relative_path)?;
         let cow_path = self.cow_dir.join(relative_path);
         if cow_path.exists() {
             return std::fs::read(&cow_path).map_err(FsError::Io);
@@ -74,6 +102,7 @@ impl CowDirectory {
     /// exists in `source` and hasn't been copied yet), then the new `data`
     /// is written.
     pub fn write(&mut self, relative_path: &Path, data: &[u8]) -> Result<(), FsError> {
+        validate_relative_path(relative_path)?;
         let cow_path = self.cow_dir.join(relative_path);
 
         // Ensure parent directories exist in cow_dir.

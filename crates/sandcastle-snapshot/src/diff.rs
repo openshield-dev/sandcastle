@@ -141,6 +141,9 @@ struct FileInfo {
     modified: Option<SystemTime>,
 }
 
+/// Maximum recursion depth for directory traversal to prevent stack overflow.
+const MAX_WALK_DEPTH: u32 = 100;
+
 /// Walk a directory tree and collect relative path → [`FileInfo`] for every
 /// regular file.  Returns an empty map if `dir` does not exist.
 fn walk_dir(dir: &Path) -> Result<HashMap<PathBuf, FileInfo>, SnapshotError> {
@@ -148,7 +151,7 @@ fn walk_dir(dir: &Path) -> Result<HashMap<PathBuf, FileInfo>, SnapshotError> {
     if !dir.exists() {
         return Ok(map);
     }
-    walk_dir_inner(dir, dir, &mut map)?;
+    walk_dir_inner(dir, dir, &mut map, 0)?;
     Ok(map)
 }
 
@@ -156,14 +159,27 @@ fn walk_dir_inner(
     root: &Path,
     current: &Path,
     map: &mut HashMap<PathBuf, FileInfo>,
+    depth: u32,
 ) -> Result<(), SnapshotError> {
+    if depth >= MAX_WALK_DEPTH {
+        return Err(SnapshotError::StorageError(format!(
+            "directory traversal exceeded max depth of {MAX_WALK_DEPTH} at '{}'",
+            current.display()
+        )));
+    }
+
     for entry in std::fs::read_dir(current)? {
         let entry = entry?;
         let abs = entry.path();
-        let meta = entry.metadata()?;
+        let meta = std::fs::symlink_metadata(&abs)?;
+
+        // Skip symlinks to avoid cycles and path-traversal issues.
+        if meta.file_type().is_symlink() {
+            continue;
+        }
 
         if meta.is_dir() {
-            walk_dir_inner(root, &abs, map)?;
+            walk_dir_inner(root, &abs, map, depth + 1)?;
         } else {
             let rel = abs
                 .strip_prefix(root)

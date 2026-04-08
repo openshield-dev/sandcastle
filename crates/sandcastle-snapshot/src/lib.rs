@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Sandbox state snapshot, restore, and checkpoint management for SandCastle.
 //!
 //! Provides CoW snapshots, branching, restoration, and diffing for sandboxed

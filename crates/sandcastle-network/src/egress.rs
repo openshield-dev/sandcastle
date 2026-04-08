@@ -36,14 +36,14 @@ impl RequestCounter {
             self.window_start = Instant::now();
         }
 
-        self.total += 1;
-        self.window_count += 1;
-
         if let Some(max) = self.max_per_minute {
-            if self.window_count > max {
+            if self.window_count >= max {
                 return Err(NetworkError::RateLimitExceeded(domain.to_string()));
             }
         }
+
+        self.total += 1;
+        self.window_count += 1;
 
         Ok(())
     }
@@ -106,6 +106,10 @@ impl EgressController {
             .or_insert_with(|| RequestCounter::new(None));
 
         counter.record(domain)?;
+
+        // Update total_bytes immediately so the accounting is atomic —
+        // prevents a gap where concurrent checks could exceed the cap.
+        self.total_bytes = self.total_bytes.saturating_add(bytes);
 
         Ok(())
     }

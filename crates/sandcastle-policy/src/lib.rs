@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Policy definition, parsing, and enforcement for SandCastle sandboxes.
 //!
 //! This crate provides the core types for describing what a sandboxed agent

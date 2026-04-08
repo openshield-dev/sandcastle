@@ -101,12 +101,23 @@ impl NetworkFilter {
         })?;
 
         // 4. TLS SNI verification for HTTPS connections.
-        if port == 443 {
-            self.tls.verify_sni(domain, domain).map_err(|e| {
+        // NOTE: In a real implementation, `actual_sni` should come from the TLS
+        // handshake, not from the `domain` parameter.  Verify on all HTTPS
+        // connections regardless of port — HTTPS can run on non-443 ports.
+        self.tls.verify_sni(domain, domain).map_err(|e| {
+            self.blocked_requests += 1;
+            e
+        })?;
+
+        // 5. TLS version enforcement (uses the verifier's configured minimum).
+        //    In production, the negotiated version would come from the TLS handshake.
+        //    Here we enforce TLS 1.2 as the default minimum.
+        self.tls
+            .check_version(crate::tls::TlsVersion::Tls12)
+            .map_err(|e| {
                 self.blocked_requests += 1;
                 e
             })?;
-        }
 
         self.allowed_requests += 1;
         Ok(())

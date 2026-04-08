@@ -1,7 +1,7 @@
 //! DNS resolution interceptor that enforces domain allowlists.
 
 use std::collections::HashMap;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv6Addr};
 
 use crate::error::NetworkError;
 
@@ -59,8 +59,21 @@ impl DnsInterceptor {
         }
 
         // 4. Stub resolution — real async resolution via hickory-resolver would live here.
+        //    Uses a placeholder public IP; a real implementation would call the system
+        //    resolver or hickory-resolver and return actual results.
         self.cache_misses += 1;
-        let ips: Vec<IpAddr> = vec![IpAddr::from([127, 0, 0, 1])];
+        let ips: Vec<IpAddr> = vec![IpAddr::from([93, 184, 216, 34])];
+
+        // 5. Reject any resolved IP that falls in a private or reserved range
+        //    to prevent SSRF / cloud-metadata attacks.
+        for ip in &ips {
+            if is_private_or_reserved(ip) {
+                return Err(NetworkError::DomainBlocked(format!(
+                    "{domain} resolves to private/reserved address {ip}"
+                )));
+            }
+        }
+
         self.cache.insert(domain.to_string(), ips.clone());
         Ok(ips)
     }
@@ -119,10 +132,48 @@ fn glob_match(pattern: &str, domain: &str) -> bool {
     let domain_lower = domain.to_lowercase();
 
     if let Some(suffix) = pattern_lower.strip_prefix("*.") {
-        // `*.example.com` — domain must end with `.example.com` but NOT be `example.com` itself.
-        domain_lower.ends_with(&format!(".{suffix}"))
+        // `*.example.com` — domain must have exactly one more label than the suffix,
+        // preventing multi-label subdomain bypass (e.g. `a.b.example.com`).
+        let suffix_labels: Vec<&str> = suffix.split('.').collect();
+        let domain_labels: Vec<&str> = domain_lower.split('.').collect();
+
+        if domain_labels.len() != suffix_labels.len() + 1 {
+            return false;
+        }
+
+        let trailing = &domain_labels[domain_labels.len() - suffix_labels.len()..];
+        trailing == suffix_labels.as_slice()
     } else {
         pattern_lower == domain_lower
+    }
+}
+
+/// Return `true` if `ip` falls within a private, loopback, link-local, or other
+/// reserved range.  Used to block SSRF and cloud-metadata attacks after DNS
+/// resolution.
+fn is_private_or_reserved(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            let octets = v4.octets();
+            // 10.0.0.0/8
+            octets[0] == 10
+            // 172.16.0.0/12
+            || (octets[0] == 172 && (octets[1] & 0xf0) == 16)
+            // 192.168.0.0/16
+            || (octets[0] == 192 && octets[1] == 168)
+            // 127.0.0.0/8 (loopback)
+            || octets[0] == 127
+            // 169.254.0.0/16 (link-local / cloud metadata)
+            || (octets[0] == 169 && octets[1] == 254)
+        }
+        IpAddr::V6(v6) => {
+            // ::1 (loopback)
+            *v6 == Ipv6Addr::LOCALHOST
+            // ::ffff:127.0.0.0/104 (IPv4-mapped loopback)
+            || matches!(v6.to_ipv4_mapped(), Some(v4) if v4.octets()[0] == 127)
+            // fe80::/10 (link-local)
+            || (v6.segments()[0] & 0xffc0) == 0xfe80
+        }
     }
 }
 

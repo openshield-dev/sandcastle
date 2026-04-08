@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Filesystem isolation, path allowlisting, and virtual overlay management for SandCastle.
 //!
 //! This crate enforces the filesystem portion of a [`sandcastle_policy::SandboxProfile`]:

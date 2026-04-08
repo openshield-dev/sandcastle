@@ -1,3 +1,4 @@
+#![allow(unsafe_code)]
 //! Windows sandbox implementation using Job Objects, AppContainer, and
 //! optional Hyper-V process isolation.
 //!
@@ -23,7 +24,7 @@ use crate::{
 use sandcastle_policy::permission::ResourceLimits;
 use sandcastle_policy::SandboxProfile;
 use std::process::{Child, Command, ExitStatus};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use windows_sys::Win32::{
     Foundation::{CloseHandle, HANDLE},
@@ -116,7 +117,7 @@ impl Sandbox for WindowsSandbox {
             cmd.env(k, v);
         }
 
-        let child = cmd.spawn().map_err(|e| {
+        let mut child = cmd.spawn().map_err(|e| {
             PlatformError::ExecFailed(format!("failed to spawn {}: {e}", self.config.command))
         })?;
 
@@ -128,10 +129,12 @@ impl Sandbox for WindowsSandbox {
             // SAFETY: Both handles are valid at this point.
             let result = unsafe { AssignProcessToJobObject(job.raw(), proc_handle) };
             if result == 0 {
-                warn!(
-                    sandbox_id = %self.id,
-                    "failed to assign process to Job Object (non-fatal)"
-                );
+                // Kill the child before returning — it is running without
+                // resource limits and must not be allowed to continue.
+                let _ = child.kill();
+                return Err(PlatformError::CreateFailed(
+                    "failed to assign process to Job Object — child killed".into(),
+                ));
             } else {
                 debug!(sandbox_id = %self.id, "process assigned to Job Object");
             }
@@ -237,7 +240,18 @@ fn create_job_object(limits: &ResourceLimits) -> Result<OwnedHandle, PlatformErr
         SchedulingClass: 0,
     };
 
-    // SAFETY: handle is valid; info is fully initialised; size is exact.
+    // SAFETY:
+    // - `handle` is a valid, non-null Job Object handle obtained from
+    //   `CreateJobObjectW` above, and has not been closed yet.
+    // - `info` is a fully initialised `JOBOBJECT_BASIC_LIMIT_INFORMATION`
+    //   struct with all fields explicitly set (no uninit padding).
+    // - The struct is passed by pointer; the cast from `*const
+    //   JOBOBJECT_BASIC_LIMIT_INFORMATION` to `*const c_void` is required by
+    //   the FFI signature and is valid because the pointer is non-null and
+    //   correctly aligned (the struct has natural alignment ≥ pointer size).
+    // - The `cb` parameter is `size_of::<JOBOBJECT_BASIC_LIMIT_INFORMATION>()`
+    //   which matches the information class `JobObjectBasicLimitInformation`,
+    //   ensuring the kernel reads exactly the right number of bytes.
     let result = unsafe {
         SetInformationJobObject(
             handle,
@@ -270,11 +284,23 @@ fn create_job_object(limits: &ResourceLimits) -> Result<OwnedHandle, PlatformErr
 fn parse_memory_string(s: &str) -> Option<usize> {
     let s = s.trim();
     if let Some(n) = s.strip_suffix("GB") {
-        n.trim().parse::<usize>().ok().map(|n| n * 1024 * 1024 * 1024)
+        n.trim()
+            .parse::<usize>()
+            .ok()
+            .and_then(|n| n.checked_mul(1024))
+            .and_then(|v| v.checked_mul(1024))
+            .and_then(|v| v.checked_mul(1024))
     } else if let Some(n) = s.strip_suffix("MB") {
-        n.trim().parse::<usize>().ok().map(|n| n * 1024 * 1024)
+        n.trim()
+            .parse::<usize>()
+            .ok()
+            .and_then(|n| n.checked_mul(1024))
+            .and_then(|v| v.checked_mul(1024))
     } else if let Some(n) = s.strip_suffix("KB") {
-        n.trim().parse::<usize>().ok().map(|n| n * 1024)
+        n.trim()
+            .parse::<usize>()
+            .ok()
+            .and_then(|n| n.checked_mul(1024))
     } else {
         s.parse().ok()
     }

@@ -137,21 +137,36 @@ impl AuditExporter {
         Ok(out)
     }
 
+    /// Escape a field value for safe CSV output.
+    ///
+    /// - Doubles internal quotes (`"` → `""`).
+    /// - Prefixes the value with a single quote if it starts with a character
+    ///   that spreadsheet applications interpret as a formula (`=`, `+`, `-`, `@`).
+    fn escape_csv_field(s: &str) -> String {
+        let mut escaped = s.replace('"', "\"\"");
+        if escaped.starts_with('=')
+            || escaped.starts_with('+')
+            || escaped.starts_with('-')
+            || escaped.starts_with('@')
+        {
+            escaped.insert(0, '\'');
+        }
+        escaped
+    }
+
     fn to_csv(events: &[AuditEvent]) -> Result<String, AuditError> {
         let mut out =
             String::from("id,timestamp,sandbox_id,session_id,event_type,decision,description\n");
         for e in events {
-            // Escape any commas or quotes in the description.
-            let desc = e.action.description.replace('"', "\"\"");
+            let id = Self::escape_csv_field(&e.id.to_string());
+            let ts = Self::escape_csv_field(&e.timestamp.to_rfc3339());
+            let sandbox = Self::escape_csv_field(&e.sandbox_id);
+            let session = Self::escape_csv_field(&e.session_id.to_string());
+            let etype = Self::escape_csv_field(&e.event_type.to_string());
+            let decision = Self::escape_csv_field(&e.policy_result.decision.to_string());
+            let desc = Self::escape_csv_field(&e.action.description);
             out.push_str(&format!(
-                "{},{},{},{},{},{},\"{}\"\n",
-                e.id,
-                e.timestamp.to_rfc3339(),
-                e.sandbox_id,
-                e.session_id,
-                e.event_type,
-                e.policy_result.decision,
-                desc,
+                "\"{id}\",\"{ts}\",\"{sandbox}\",\"{session}\",\"{etype}\",\"{decision}\",\"{desc}\"\n",
             ));
         }
         Ok(out)

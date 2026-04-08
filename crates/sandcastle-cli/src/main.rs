@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! SandCastle command-line interface.
 
 use clap::{Parser, Subcommand};
