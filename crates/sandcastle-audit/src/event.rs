@@ -229,7 +229,7 @@ impl AuditEvent {
             event_type,
             ActionDetail {
                 description,
-                path: Some(path),
+                path: Some(safe_path),
                 domain: None,
                 command: None,
                 size_bytes: None,
@@ -255,7 +255,7 @@ impl AuditEvent {
             ActionDetail {
                 description,
                 path: None,
-                domain: Some(domain),
+                domain: Some(safe_domain.clone()),
                 command: None,
                 size_bytes: None,
                 extra: HashMap::new(),
@@ -281,7 +281,7 @@ impl AuditEvent {
                 description,
                 path: None,
                 domain: None,
-                command: Some(command),
+                command: Some(safe_command.clone()),
                 size_bytes: None,
                 extra: HashMap::new(),
             },
@@ -300,5 +300,61 @@ impl AuditEvent {
             self.policy_result.decision,
             PolicyDecision::Deny | PolicyDecision::AskHuman
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_strips_control_chars() {
+        let evil = "normal\n\r\t\x1b[0m\0injected";
+        let clean = sanitize_log_string(evil);
+        assert!(!clean.contains('\n'));
+        assert!(!clean.contains('\r'));
+        assert!(!clean.contains('\t'));
+        assert!(!clean.contains('\x1b'));
+        assert!(!clean.contains('\0'));
+        assert!(clean.contains("normal"));
+        assert!(clean.contains("injected"));
+    }
+
+    #[test]
+    fn filesystem_event_sanitizes_path_field() {
+        let evil_path = "/etc/passwd\n{\"fake\":\"event\"}".to_string();
+        let event = AuditEvent::filesystem(
+            "sb1".into(),
+            Uuid::new_v4(),
+            EventType::FilesystemRead,
+            evil_path,
+            PolicyDecision::Allow,
+        );
+        // The path field stored in ActionDetail must be sanitized.
+        assert!(!event.action.path.unwrap().contains('\n'));
+    }
+
+    #[test]
+    fn network_event_sanitizes_domain_field() {
+        let evil_domain = "evil.com\nevil2.com".to_string();
+        let event = AuditEvent::network(
+            "sb1".into(),
+            Uuid::new_v4(),
+            evil_domain,
+            PolicyDecision::Allow,
+        );
+        assert!(!event.action.domain.unwrap().contains('\n'));
+    }
+
+    #[test]
+    fn process_event_sanitizes_command_field() {
+        let evil_cmd = "rm -rf /\n{\"injected\":true}".to_string();
+        let event = AuditEvent::process(
+            "sb1".into(),
+            Uuid::new_v4(),
+            evil_cmd,
+            PolicyDecision::Allow,
+        );
+        assert!(!event.action.command.unwrap().contains('\n'));
     }
 }
