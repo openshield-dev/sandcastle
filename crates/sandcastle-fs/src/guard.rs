@@ -109,7 +109,7 @@ fn glob_match_simple(pattern: &str, text: &str) -> bool {
     let normalized_text = {
         let p = std::path::Path::new(text);
         let normalized = lexical_normalize(p);
-        normalized.to_string_lossy().to_string()
+        normalized.to_string_lossy().replace('\\', "/")
     };
     let text: &str = &normalized_text;
 
@@ -124,7 +124,8 @@ fn glob_match_simple(pattern: &str, text: &str) -> bool {
 
     if pattern.ends_with("/**") || pattern.ends_with("/**/*") {
         let prefix = pattern.trim_end_matches("/**/*").trim_end_matches("/**");
-        return text.starts_with(prefix);
+        // Exact match on the prefix itself, or text is under prefix/.
+        return text == prefix || text.starts_with(&format!("{prefix}/"));
     }
 
     if pattern.ends_with("/*") {
@@ -136,4 +137,39 @@ fn glob_match_simple(pattern: &str, text: &str) -> bool {
 
     // Exact match.
     text == pattern
+}
+
+#[cfg(test)]
+mod tests {
+    use super::glob_match_simple;
+
+    #[test]
+    fn glob_double_star_requires_slash_boundary() {
+        // /sandbox/project/** must NOT match /sandbox/project-evil/secret
+        assert!(!glob_match_simple("/sandbox/project/**", "/sandbox/project-evil/secret"));
+        assert!(!glob_match_simple("/sandbox/project/**", "/sandbox/project-evil"));
+
+        // But it MUST match paths actually under /sandbox/project/
+        assert!(glob_match_simple("/sandbox/project/**", "/sandbox/project/file.txt"));
+        assert!(glob_match_simple("/sandbox/project/**", "/sandbox/project/sub/deep"));
+        assert!(glob_match_simple("/sandbox/project/**", "/sandbox/project"));
+    }
+
+    #[test]
+    fn glob_single_star_matches_one_level() {
+        assert!(glob_match_simple("/etc/*", "/etc/passwd"));
+        assert!(!glob_match_simple("/etc/*", "/etc/ssh/config"));
+    }
+
+    #[test]
+    fn glob_exact_match() {
+        assert!(glob_match_simple("/etc/passwd", "/etc/passwd"));
+        assert!(!glob_match_simple("/etc/passwd", "/etc/shadow"));
+    }
+
+    #[test]
+    fn glob_star_matches_all() {
+        assert!(glob_match_simple("*", "/anything/at/all"));
+        assert!(glob_match_simple("/**", "/anything/at/all"));
+    }
 }

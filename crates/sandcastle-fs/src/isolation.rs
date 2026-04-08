@@ -252,7 +252,8 @@ fn glob_match_simple(pattern: &str, text: &str) -> bool {
 
     if pattern.ends_with("/**") || pattern.ends_with("/**/*") {
         let prefix = pattern.trim_end_matches("/**/*").trim_end_matches("/**");
-        return text.starts_with(prefix);
+        // Exact match on the prefix itself, or text is under prefix/.
+        return text == prefix || text.starts_with(&format!("{prefix}/"));
     }
 
     if pattern.ends_with("/*") {
@@ -286,7 +287,8 @@ fn lexical_normalize_path(text: &str) -> String {
             other => parts.push(other.as_os_str().to_owned()),
         }
     }
-    parts.iter().collect::<std::path::PathBuf>().to_string_lossy().into_owned()
+    // Always use forward slashes for cross-platform matching consistency.
+    parts.iter().collect::<std::path::PathBuf>().to_string_lossy().replace('\\', "/")
 }
 
 /// Parse a human-readable size string like "10GB" into bytes.
