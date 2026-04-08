@@ -14,6 +14,9 @@ use crate::snapshot::{
 /// Name of the JSON file that indexes all snapshots in the store.
 const INDEX_FILE: &str = "index.json";
 
+/// Type alias to reduce return type complexity in load_index.
+type SnapshotIndex = (HashMap<Uuid, SnapshotMetadata>, HashMap<String, Uuid>);
+
 /// Manages snapshot storage and retrieval under a root directory.
 ///
 /// Each snapshot is stored as a subdirectory named by its UUID containing a
@@ -105,9 +108,9 @@ impl SnapshotStore {
             Ok(())
         })();
 
-        if result.is_err() {
+        if let Err(e) = result {
             let _ = std::fs::remove_dir_all(&data_path);
-            return Err(result.unwrap_err());
+            return Err(e);
         }
 
         info!(
@@ -263,7 +266,7 @@ impl SnapshotStore {
     /// Load (or initialise) the index from `index.json` in `store_root`.
     fn load_index(
         store_root: &Path,
-    ) -> Result<(HashMap<Uuid, SnapshotMetadata>, HashMap<String, Uuid>), SnapshotError> {
+    ) -> Result<SnapshotIndex, SnapshotError> {
         let path = store_root.join(INDEX_FILE);
 
         if !path.exists() {

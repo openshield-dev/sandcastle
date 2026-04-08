@@ -77,8 +77,8 @@ pub fn search(query: &str) -> anyhow::Result<()> {
     }
 
     println!(
-        "  {:<16} {:<10} {:<7} {}",
-        "NAME", "VERSION", "STARS", "DESCRIPTION"
+        "  {:<16} {:<10} {:<7} DESCRIPTION",
+        "NAME", "VERSION", "STARS"
     );
 
     for entry in &results {
@@ -122,6 +122,10 @@ pub fn install(name: &str) -> anyhow::Result<()> {
          # Installed from community registry ({})\n",
         entry.version,
     );
+
+    if path.exists() {
+        eprintln!("sandcastle: warning: '{}' already exists — overwriting", path.display());
+    }
 
     std::fs::write(&path, format!("{header}{yaml}"))
         .with_context(|| format!("Failed to write '{}'", path.display()))?;

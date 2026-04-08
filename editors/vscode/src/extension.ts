@@ -6,9 +6,27 @@ let statusBarItem: vscode.StatusBarItem;
 let auditLogWatcher: vscode.FileSystemWatcher | undefined;
 let monitorPanel: vscode.WebviewPanel | undefined;
 
+/** Shell-escape a string to prevent command injection. */
+function shellEscape(s: string): string {
+  // Wrap in single quotes, escape existing single quotes.
+  return "'" + s.replace(/'/g, "'\\''") + "'";
+}
+
+/** Validate the binaryPath setting to prevent command injection. */
+function validateBinaryPath(p: string): string {
+  // Only allow simple paths — no shell metacharacters.
+  if (/[;&|`$(){}!<>]/.test(p)) {
+    vscode.window.showErrorMessage(
+      `SandCastle: binaryPath "${p}" contains unsafe characters. Using default.`
+    );
+    return "sandcastle";
+  }
+  return p;
+}
+
 export function activate(context: vscode.ExtensionContext) {
   const config = vscode.workspace.getConfiguration("sandcastle");
-  const binaryPath = config.get<string>("binaryPath", "sandcastle");
+  const binaryPath = validateBinaryPath(config.get<string>("binaryPath", "sandcastle"));
 
   // Status bar item
   statusBarItem = vscode.window.createStatusBarItem(
@@ -123,7 +141,7 @@ export function activate(context: vscode.ExtensionContext) {
       const terminal = vscode.window.createTerminal("SandCastle Run");
       terminal.show();
       terminal.sendText(
-        `${binaryPath} run --profile ${profile} -- ${command}`
+        `${shellEscape(binaryPath)} run --profile ${shellEscape(profile)} -- ${shellEscape(command)}`
       );
     })
   );

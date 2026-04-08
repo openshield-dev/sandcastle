@@ -15,7 +15,7 @@ static BUILTINS: &[(&str, BuiltinProfile)] = &[
 
 /// List all built-in profiles with their trust levels.
 pub fn list() -> anyhow::Result<()> {
-    println!("{:<16} {:<14} {}", "NAME", "TRUST LEVEL", "DESCRIPTION");
+    println!("{:<16} {:<14} DESCRIPTION", "NAME", "TRUST LEVEL");
     println!("{}", "-".repeat(80));
 
     for (name, builtin) in BUILTINS {

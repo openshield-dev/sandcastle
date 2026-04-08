@@ -59,8 +59,8 @@ fn matches_deny_list<'a>(value: &str, deny_patterns: &'a [String]) -> Option<&'a
             return value.starts_with(&format!("{prefix}/"));
         }
         // Leading * (suffix match).
-        if pat.starts_with('*') {
-            return value.ends_with(&pat[1..]);
+        if let Some(suffix) = pat.strip_prefix('*') {
+            return value.ends_with(suffix);
         }
         // Exact match.
         value == pat
@@ -204,7 +204,12 @@ pub fn execute(
         audit_mode,
     };
 
-    // 5. Setup audit logger with file sink.
+    // 5. Auto-snapshot before run (enables `sandcastle undo`).
+    if let Ok(snap_name) = super::undo::create_auto_snapshot() {
+        eprintln!("sandcastle: auto-snapshot '{snap_name}' created (use `sandcastle undo` to restore)");
+    }
+
+    // 6. Setup audit logger with file sink.
     let mut logger = AuditLogger::new();
     let audit_dir = std::env::current_dir()
         .context("Failed to determine current directory")?

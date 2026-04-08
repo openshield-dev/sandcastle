@@ -51,15 +51,23 @@ impl BehaviorFingerprint {
         if count > self.max_events_per_run {
             self.max_events_per_run = count;
         }
+        // Cap set sizes to prevent unbounded growth over many runs.
+        const MAX_SET_SIZE: usize = 10_000;
         for event in events {
             if let Some(ref p) = event.action.path {
-                self.known_paths.insert(p.clone());
+                if self.known_paths.len() < MAX_SET_SIZE {
+                    self.known_paths.insert(p.clone());
+                }
             }
             if let Some(ref d) = event.action.domain {
-                self.known_domains.insert(d.clone());
+                if self.known_domains.len() < MAX_SET_SIZE {
+                    self.known_domains.insert(d.clone());
+                }
             }
             if let Some(ref c) = event.action.command {
-                self.known_commands.insert(c.clone());
+                if self.known_commands.len() < MAX_SET_SIZE {
+                    self.known_commands.insert(c.clone());
+                }
             }
         }
         self.updated_at = chrono::Utc::now();
@@ -172,7 +180,17 @@ impl FingerprintStore {
 
     pub fn load(&self, profile: &str) -> Option<BehaviorFingerprint> {
         let data = std::fs::read_to_string(self.profile_path(profile)).ok()?;
-        serde_json::from_str(&data).ok()
+        match serde_json::from_str(&data) {
+            Ok(fp) => Some(fp),
+            Err(e) => {
+                tracing::warn!(
+                    profile = %profile,
+                    error = %e,
+                    "Fingerprint file is corrupted — starting fresh"
+                );
+                None
+            }
+        }
     }
 
     pub fn save(&self, fingerprint: &BehaviorFingerprint) -> Result<(), std::io::Error> {
@@ -182,7 +200,10 @@ impl FingerprintStore {
         }
         let json = serde_json::to_string_pretty(fingerprint)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        std::fs::write(&path, json)
+        // Atomic write: write to temp file then rename to prevent corruption.
+        let tmp_path = path.with_extension("json.tmp");
+        std::fs::write(&tmp_path, &json)?;
+        std::fs::rename(&tmp_path, &path)
     }
 }
 

@@ -49,7 +49,7 @@ fn add(factors: &mut Vec<RiskFactor>, raw: &mut u16, name: &str, pts: u8, desc: 
 }
 
 fn path_matches(e: &AuditEvent, patterns: &[&str]) -> bool {
-    e.action.path.as_deref().map_or(false, |p| {
+    e.action.path.as_deref().is_some_and(|p| {
         let lo = p.to_lowercase();
         patterns.iter().any(|s| lo.contains(s))
     })
@@ -68,7 +68,7 @@ impl RiskReport {
         // Blocked operations (+1 per 5, min 1)
         let blocked = events.iter().filter(|e| e.policy_result.decision == PolicyDecision::Deny).count();
         if blocked > 0 {
-            let pts = (blocked / 5).max(1).min(10) as u8;
+            let pts = (blocked / 5).clamp(1, 10) as u8;
             add(&mut factors, &mut raw, "blocked_operations", pts, format!("{blocked} blocked operation(s)"));
         }
 
@@ -81,7 +81,7 @@ impl RiskReport {
 
         // Cloud metadata access (+4)
         let meta = events.iter().any(|e| {
-            e.action.domain.as_deref().map_or(false, |d| METADATA.contains(&d))
+            e.action.domain.as_deref().is_some_and(|d| METADATA.contains(&d))
                 || path_matches(e, METADATA)
         });
         if meta { add(&mut factors, &mut raw, "cloud_metadata_access", 4, "attempted access to cloud metadata endpoint".into()); }
@@ -110,7 +110,7 @@ impl RiskReport {
             .count();
         if outside > 0 { add(&mut factors, &mut raw, "write_outside_project", 3, format!("{outside} write(s) outside project directory")); }
 
-        let score = (raw as u8).min(10);
+        let score = raw.min(10) as u8;
         let level = RiskLevel::from_score(score);
         let summary = Self::build_summary(&level, sens, &domains, &unknown, blocked, dels);
         Self { score, level, factors, summary }

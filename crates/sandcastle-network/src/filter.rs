@@ -89,24 +89,21 @@ impl NetworkFilter {
         }
 
         // 2. DNS check (also enforces the blocklist).
-        self.dns.resolve(domain).map_err(|e| {
+        self.dns.resolve(domain).inspect_err(|_| {
             self.blocked_requests += 1;
-            e
         })?;
 
         // 3. Egress check.
-        self.egress.check_egress(domain, port, bytes).map_err(|e| {
+        self.egress.check_egress(domain, port, bytes).inspect_err(|_| {
             self.blocked_requests += 1;
-            e
         })?;
 
         // 4. TLS SNI verification for HTTPS connections.
         // NOTE: In a real implementation, `actual_sni` should come from the TLS
         // handshake, not from the `domain` parameter.  Verify on all HTTPS
         // connections regardless of port — HTTPS can run on non-443 ports.
-        self.tls.verify_sni(domain, domain).map_err(|e| {
+        self.tls.verify_sni(domain, domain).inspect_err(|_| {
             self.blocked_requests += 1;
-            e
         })?;
 
         // 5. TLS version enforcement (uses the verifier's configured minimum).
@@ -114,9 +111,8 @@ impl NetworkFilter {
         //    Here we enforce TLS 1.2 as the default minimum.
         self.tls
             .check_version(crate::tls::TlsVersion::Tls12)
-            .map_err(|e| {
+            .inspect_err(|_| {
                 self.blocked_requests += 1;
-                e
             })?;
 
         self.allowed_requests += 1;

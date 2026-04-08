@@ -95,7 +95,7 @@ fn lexical_normalize(path: &Path) -> PathBuf {
                     let is_normal = std::path::Path::new(last)
                         .components()
                         .next()
-                        .map_or(false, |c| matches!(c, Component::Normal(_)));
+                        .is_some_and(|c| matches!(c, Component::Normal(_)));
                     if is_normal {
                         components.pop();
                     }

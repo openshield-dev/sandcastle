@@ -101,7 +101,7 @@ impl ProfileResolver {
         // from matching the "claude" needle via a naive `contains` check.
         let exe_token = lower.split_whitespace().next().unwrap_or(&lower);
         let binary_name = exe_token
-            .rsplit(|c: char| c == '/' || c == '\\')
+            .rsplit(['/', '\\'])
             .next()
             .unwrap_or(exe_token);
         for (needle, profile) in COMMAND_MAP {

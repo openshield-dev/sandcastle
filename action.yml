@@ -47,36 +47,51 @@ runs:
   steps:
     - name: Install SandCastle
       shell: bash
+      # All inputs passed via environment variables to prevent shell injection.
+      env:
+        SC_VERSION: ${{ inputs.version }}
       run: |
-        if [ "${{ inputs.version }}" = "latest" ]; then
+        if [ "$SC_VERSION" = "latest" ]; then
           cargo install sandcastle-cli --locked
         else
-          cargo install sandcastle-cli@${{ inputs.version }} --locked
+          cargo install "sandcastle-cli@${SC_VERSION}" --locked
         fi
 
     - name: Run sandboxed command
       shell: bash
       id: sandbox
+      env:
+        SC_PROFILE: ${{ inputs.profile }}
+        SC_MODE: ${{ inputs.mode }}
+        SC_COMMAND: ${{ inputs.command }}
+        SC_ALLOW_DIRS: ${{ inputs.allow-dirs }}
+        SC_ALLOW_NET: ${{ inputs.allow-net }}
       run: |
-        ARGS="--profile ${{ inputs.profile }} --mode=${{ inputs.mode }}"
+        ARGS="--profile ${SC_PROFILE} --mode=${SC_MODE}"
 
-        if [ -n "${{ inputs.allow-dirs }}" ]; then
-          IFS=',' read -ra DIRS <<< "${{ inputs.allow-dirs }}"
+        if [ -n "$SC_ALLOW_DIRS" ]; then
+          IFS=',' read -ra DIRS <<< "$SC_ALLOW_DIRS"
           for dir in "${DIRS[@]}"; do
-            ARGS="$ARGS --allow-dir $(echo $dir | xargs)"
+            trimmed=$(echo "$dir" | xargs)
+            ARGS="$ARGS --allow-dir $trimmed"
           done
         fi
 
-        if [ -n "${{ inputs.allow-net }}" ]; then
-          IFS=',' read -ra DOMAINS <<< "${{ inputs.allow-net }}"
+        if [ -n "$SC_ALLOW_NET" ]; then
+          IFS=',' read -ra DOMAINS <<< "$SC_ALLOW_NET"
           for domain in "${DOMAINS[@]}"; do
-            ARGS="$ARGS --allow-net $(echo $domain | xargs)"
+            trimmed=$(echo "$domain" | xargs)
+            ARGS="$ARGS --allow-net $trimmed"
           done
         fi
 
-        sandcastle run $ARGS -- ${{ inputs.command }}
-        echo "exit-code=$?" >> $GITHUB_OUTPUT
+        set +e
+        sandcastle run $ARGS -- $SC_COMMAND
+        SC_EXIT=$?
+        set -e
+        echo "exit-code=${SC_EXIT}" >> $GITHUB_OUTPUT
         echo "audit-log=.sandcastle/audit.log" >> $GITHUB_OUTPUT
+        exit $SC_EXIT
 
     - name: Upload audit log
       if: always()

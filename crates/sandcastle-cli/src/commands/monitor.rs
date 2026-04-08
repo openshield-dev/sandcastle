@@ -39,16 +39,45 @@ impl DashboardState {
         Self { events: Vec::new(), scroll_offset: 0, violations_only: false }
     }
 
+    /// Maximum audit file size to read (10 MB). Prevents DoS on large logs.
+    const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
+
     fn load_events(&mut self, path: &std::path::Path) -> anyhow::Result<()> {
-        let raw = match std::fs::read_to_string(path) {
-            Ok(c) => c,
+        // Check file size before reading to prevent OOM on large logs.
+        let meta = match std::fs::metadata(path) {
+            Ok(m) => m,
             Err(_) => return Ok(()),
         };
-        self.events = raw
-            .lines()
-            .filter(|l| !l.trim().is_empty())
-            .filter_map(|l| serde_json::from_str::<AuditEvent>(l).ok())
-            .collect();
+        if meta.len() > Self::MAX_FILE_SIZE {
+            // Read only the tail of the file (last MAX_FILE_SIZE bytes).
+            use std::io::{Read, Seek, SeekFrom};
+            let mut f = std::fs::File::open(path)?;
+            f.seek(SeekFrom::End(-(Self::MAX_FILE_SIZE as i64)))?;
+            let mut raw = String::new();
+            f.read_to_string(&mut raw)?;
+            // Drop the first (likely partial) line.
+            if let Some(idx) = raw.find('\n') {
+                raw = raw[idx + 1..].to_string();
+            }
+            self.events = raw.lines()
+                .filter(|l| !l.trim().is_empty())
+                .filter_map(|l| serde_json::from_str::<AuditEvent>(l).ok())
+                .collect();
+        } else {
+            let raw = match std::fs::read_to_string(path) {
+                Ok(c) => c,
+                Err(_) => return Ok(()),
+            };
+            self.events = raw.lines()
+                .filter(|l| !l.trim().is_empty())
+                .filter_map(|l| serde_json::from_str::<AuditEvent>(l).ok())
+                .collect();
+        }
+        // Clamp scroll offset to valid range after reload.
+        let max = self.events.len().saturating_sub(1);
+        if self.scroll_offset > max {
+            self.scroll_offset = max;
+        }
         Ok(())
     }
 
