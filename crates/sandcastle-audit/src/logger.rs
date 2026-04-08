@@ -233,7 +233,9 @@ impl AuditLogger {
     /// is returned after attempting every sink.
     pub fn log(&mut self, event: AuditEvent) -> Result<(), AuditError> {
         // --- Rate limiting (per-minute window) ---
-        let now_secs = event.timestamp.timestamp() as u64;
+        // Use trusted system time, not the event's own timestamp which could be
+        // forged to bypass rate limiting.
+        let now_secs = chrono::Utc::now().timestamp().unsigned_abs();
         if now_secs / 60 != self.current_minute_start / 60 {
             // New minute window — reset counters.
             self.current_minute_start = now_secs;
