@@ -172,4 +172,41 @@ mod tests {
         assert!(glob_match_simple("*", "/anything/at/all"));
         assert!(glob_match_simple("/**", "/anything/at/all"));
     }
+
+    #[test]
+    fn glob_tilde_prefix_matches() {
+        // The ~ prefix is stripped during matching, so "~/.ssh/**" matches
+        // paths starting with "/.ssh/".
+        assert!(glob_match_simple("~/.ssh/**", "/.ssh/id_rsa"));
+        assert!(glob_match_simple("~/.ssh/**", "/.ssh/config"));
+    }
+
+    #[test]
+    fn deny_overrides_allow() {
+        // A path matching both deny and allow should be denied.
+        use sandcastle_policy::SandboxProfile;
+        use sandcastle_policy::permission::*;
+        let profile = SandboxProfile {
+            name: "test".into(),
+            trust_level: TrustLevel::Develop,
+            permissions: Permissions {
+                filesystem: FsPermissions {
+                    allow_read: vec!["/data/**".into()],
+                    allow_write: vec![],
+                    deny: vec!["/data/secret/**".into()],
+                },
+                ..TrustLevel::Develop.default_permissions()
+            },
+            ..SandboxProfile::isolated("test")
+        };
+        let guard = super::FsGuard::new(profile);
+        assert!(guard.check_read(std::path::Path::new("/data/public/file.txt")).is_ok());
+        assert!(guard.check_read(std::path::Path::new("/data/secret/key.pem")).is_err());
+    }
+
+    #[test]
+    fn path_traversal_normalized() {
+        // ../../../etc/shadow should be normalized before matching
+        assert!(!glob_match_simple("/project/**", "/project/../../etc/shadow"));
+    }
 }

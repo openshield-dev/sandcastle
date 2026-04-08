@@ -182,6 +182,87 @@ impl GpuPassthrough {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_config(devices: Vec<u32>) -> GpuPassthroughConfig {
+        GpuPassthroughConfig {
+            method: PassthroughMethod::Direct,
+            device_indices: devices,
+            memory_limit: None,
+            compute_limit: None,
+        }
+    }
+
+    #[test]
+    fn max_devices_enforced() {
+        let devices: Vec<u32> = (0..17).collect();
+        let result = GpuPassthrough::new(test_config(devices));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("too many"));
+    }
+
+    #[test]
+    fn nan_compute_limit_rejected() {
+        let config = GpuPassthroughConfig {
+            method: PassthroughMethod::Direct,
+            device_indices: vec![0],
+            memory_limit: None,
+            compute_limit: Some(f32::NAN),
+        };
+        assert!(GpuPassthrough::new(config).is_err());
+    }
+
+    #[test]
+    fn memory_limit_zero_rejected() {
+        let config = GpuPassthroughConfig {
+            method: PassthroughMethod::Direct,
+            device_indices: vec![0],
+            memory_limit: Some(0),
+            compute_limit: None,
+        };
+        assert!(GpuPassthrough::new(config).is_err());
+    }
+
+    #[test]
+    fn memory_limit_too_large_rejected() {
+        let config = GpuPassthroughConfig {
+            method: PassthroughMethod::Direct,
+            device_indices: vec![0],
+            memory_limit: Some(MAX_MEMORY_LIMIT_MB + 1),
+            compute_limit: None,
+        };
+        assert!(GpuPassthrough::new(config).is_err());
+    }
+
+    #[test]
+    fn valid_config_accepted() {
+        let config = GpuPassthroughConfig {
+            method: PassthroughMethod::Direct,
+            device_indices: vec![0, 1],
+            memory_limit: Some(8192),
+            compute_limit: Some(0.5),
+        };
+        assert!(GpuPassthrough::new(config).is_ok());
+    }
+
+    #[test]
+    fn allocation_tracking_prevents_double_use() {
+        let mut pt1 = GpuPassthrough::new(test_config(vec![0])).unwrap();
+        pt1.setup().unwrap();
+
+        let mut pt2 = GpuPassthrough::new(test_config(vec![0])).unwrap();
+        let result = pt2.setup();
+        assert!(result.is_err());
+
+        // After teardown, device should be available again.
+        pt1.teardown().unwrap();
+        assert!(pt2.setup().is_ok());
+        pt2.teardown().unwrap();
+    }
+}
+
 impl Drop for GpuPassthrough {
     fn drop(&mut self) {
         if self.active {

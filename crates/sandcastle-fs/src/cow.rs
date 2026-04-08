@@ -216,3 +216,32 @@ impl CowDirectory {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::validate_relative_path;
+    use std::path::Path;
+
+    #[test]
+    fn validate_rejects_absolute_path() {
+        assert!(validate_relative_path(Path::new("/etc/passwd")).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_dot_dot() {
+        assert!(validate_relative_path(Path::new("../escape")).is_err());
+        assert!(validate_relative_path(Path::new("sub/../../escape")).is_err());
+    }
+
+    #[test]
+    fn validate_accepts_relative() {
+        assert!(validate_relative_path(Path::new("src/main.rs")).is_ok());
+        assert!(validate_relative_path(Path::new("file.txt")).is_ok());
+        assert!(validate_relative_path(Path::new("a/b/c/d")).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_null_bytes() {
+        assert!(validate_relative_path(Path::new("file\0.txt")).is_err());
+    }
+}

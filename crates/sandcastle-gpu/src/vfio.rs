@@ -151,3 +151,23 @@ impl VfioConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::VfioConfig;
+
+    #[test]
+    fn valid_pci_address_accepted() {
+        assert!(VfioConfig::new("0000:01:00.0".into()).is_ok());
+        assert!(VfioConfig::new("abcd:ef:12.3".into()).is_ok());
+    }
+
+    #[test]
+    fn invalid_pci_address_rejected() {
+        assert!(VfioConfig::new("../../etc".into()).is_err());
+        assert!(VfioConfig::new("too-short".into()).is_err());
+        assert!(VfioConfig::new("0000-01-00.0".into()).is_err()); // wrong separator
+        assert!(VfioConfig::new("".into()).is_err());
+        assert!(VfioConfig::new("0000:01:00:0".into()).is_err()); // colon instead of dot
+    }
+}
