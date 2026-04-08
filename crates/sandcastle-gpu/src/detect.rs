@@ -41,12 +41,66 @@ pub enum PassthroughMethod {
 
 /// Detect all available GPUs on the host system.
 ///
-/// This is a stub implementation. On a real host the function would query
-/// `nvidia-smi`, `/proc/driver/nvidia/gpus`, the ROCm SMI, Intel Level-Zero,
-/// or the macOS Metal device list depending on the platform.
+/// Attempts detection via `nvidia-smi` (NVIDIA), with fallback to an empty
+/// list on systems without supported GPUs. Future versions will add AMD
+/// ROCm SMI, Intel Level-Zero, and macOS Metal device enumeration.
 pub fn detect_gpus() -> Result<Vec<GpuInfo>, GpuError> {
-    tracing::info!("GPU detection requested — stub implementation, returning empty list");
-    Ok(vec![])
+    let mut gpus = Vec::new();
+
+    // Try NVIDIA detection via nvidia-smi.
+    if let Ok(nvidia_gpus) = detect_nvidia_gpus() {
+        gpus.extend(nvidia_gpus);
+    }
+
+    tracing::info!(count = gpus.len(), "GPU detection complete");
+    Ok(gpus)
+}
+
+/// Detect NVIDIA GPUs by parsing `nvidia-smi --query-gpu` output.
+fn detect_nvidia_gpus() -> Result<Vec<GpuInfo>, GpuError> {
+    use std::process::Command;
+
+    let output = Command::new("nvidia-smi")
+        .args([
+            "--query-gpu=index,name,memory.total,driver_version,compute_cap",
+            "--format=csv,noheader,nounits",
+        ])
+        .output()
+        .map_err(|e| GpuError::QueryFailed(format!("nvidia-smi not found or failed: {e}")))?;
+
+    if !output.status.success() {
+        return Err(GpuError::QueryFailed(
+            "nvidia-smi returned non-zero exit code".into(),
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut gpus = Vec::new();
+
+    for line in stdout.lines() {
+        let parts: Vec<&str> = line.split(", ").collect();
+        if parts.len() < 5 {
+            continue;
+        }
+
+        let index = parts[0].trim().parse::<u32>().unwrap_or(0);
+        let name = parts[1].trim().to_string();
+        let memory_mb = parts[2].trim().parse::<u64>().unwrap_or(0);
+        let driver_version = Some(parts[3].trim().to_string());
+        let compute_cap = Some(parts[4].trim().to_string());
+
+        gpus.push(GpuInfo {
+            index,
+            name,
+            vendor: GpuVendor::Nvidia,
+            memory_mb,
+            driver_version,
+            compute_capability: compute_cap,
+            available: true,
+        });
+    }
+
+    Ok(gpus)
 }
 
 /// Return the recommended passthrough method for the current host platform.

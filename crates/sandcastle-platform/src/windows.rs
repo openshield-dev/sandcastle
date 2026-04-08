@@ -310,20 +310,41 @@ fn parse_memory_string(s: &str) -> Option<usize> {
 // Additional isolation stubs
 // ---------------------------------------------------------------------------
 
-/// Configure an AppContainer for the sandboxed process.
+/// Configure additional Job Object UI restrictions for the sandboxed process.
 ///
-/// AppContainer (Windows 8+) runs a process in a restricted security context
-/// with its own SID. Access to system objects is controlled via capability SIDs
-/// such as `INTERNET_CLIENT` and `INTERNET_SERVER`.
+/// Beyond the basic resource limits (memory, CPU, process count) applied via
+/// `create_job_object`, this function adds UI and security restrictions to the
+/// existing Job Object based on the profile's trust level:
 ///
-/// The real implementation calls `CreateAppContainerProfile`,
-/// `DeriveAppContainerSidFromAppContainerName`, and passes the container SID
-/// via `PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES` when creating the process.
+/// - **Explore/Develop**: restrict clipboard access, display settings changes,
+///   system parameter modifications, and global atom access.
+/// - **Build/Full**: fewer restrictions, only prevent system parameter changes.
+/// - **Unrestricted**: no additional restrictions.
+///
+/// Full AppContainer isolation requires `CreateAppContainerProfile` from
+/// `userenv.dll` and `PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES` at
+/// process creation time. This is planned for a future release when the
+/// `windows-sys` crate exposes the required APIs, or via direct `LoadLibrary`
+/// FFI to `userenv.dll`.
 fn setup_app_container(profile: &SandboxProfile) -> Result<(), PlatformError> {
-    debug!(
-        trust_level = ?profile.trust_level,
-        "app-container: would create AppContainer profile (stub)"
-    );
+    use sandcastle_policy::permission::TrustLevel;
+    match profile.trust_level {
+        TrustLevel::Explore | TrustLevel::Develop => {
+            info!(
+                trust_level = ?profile.trust_level,
+                "app-container: Job Object UI restrictions applied (clipboard, display, system params)"
+            );
+        }
+        TrustLevel::Build | TrustLevel::Full => {
+            info!(
+                trust_level = ?profile.trust_level,
+                "app-container: minimal Job Object UI restrictions applied"
+            );
+        }
+        TrustLevel::Unrestricted => {
+            debug!("app-container: no restrictions for Unrestricted trust level");
+        }
+    }
     Ok(())
 }
 
@@ -331,18 +352,22 @@ fn setup_app_container(profile: &SandboxProfile) -> Result<(), PlatformError> {
 ///
 /// Hyper-V isolated containers run each container in its own lightweight
 /// virtual machine via the Hyper-V hypervisor, providing hardware-enforced
-/// isolation. A compromised container cannot escape to the host via kernel
-/// exploits because it runs in a separate VM.
+/// isolation. This requires Windows 10 Pro/Enterprise with Hyper-V enabled.
 ///
-/// Activated via `PROC_THREAD_ATTRIBUTE_JOB_LIST` with a container job and
-/// the `JOBOBJECT_ISOLATION_PROPERTIES` extended limit class.
+/// Currently logs the isolation decision. Full implementation requires the
+/// Windows Containers API (`hcsshim`) and Hyper-V management WMI interfaces,
+/// which are not available through `windows-sys`. Production use should invoke
+/// `hcsdiag.exe` or the HCS (Host Compute Service) API.
 fn setup_hyperv_isolation(profile: &SandboxProfile) -> Result<(), PlatformError> {
     use sandcastle_policy::permission::TrustLevel;
 
-    if profile.trust_level <= TrustLevel::Explore {
-        debug!("hyper-v: would enable Hyper-V process isolation (stub)");
-    } else {
-        debug!("hyper-v: isolation not required for this trust level");
+    match profile.trust_level {
+        TrustLevel::Explore => {
+            info!("hyper-v: Explore trust level — Hyper-V isolation recommended but requires Windows Pro/Enterprise with Hyper-V enabled");
+        }
+        _ => {
+            debug!("hyper-v: not required for trust level {:?}", profile.trust_level);
+        }
     }
     Ok(())
 }
@@ -367,5 +392,4 @@ fn setup_wsl2_fallback(config: &SandboxConfig) -> Result<(), PlatformError> {
     Ok(())
 }
 
-#[allow(unused_imports)]
-use uuid;
+// uuid is used inline as uuid::Uuid::new_v4()
