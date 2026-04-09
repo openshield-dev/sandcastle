@@ -6,7 +6,7 @@ Run Claude Code inside a sandboxed environment with the `claude-code` security p
 
 ```yaml
 - name: Run Claude Code in sandbox
-  uses: openshield/sandcastle@v1
+  uses: openshield-dev/sandcastle@v1
   with:
     profile: claude-code
     command: claude --task "Refactor the auth module"
@@ -18,7 +18,7 @@ Grant access to specific directories and network domains:
 
 ```yaml
 - name: Run with custom permissions
-  uses: openshield/sandcastle@v1
+  uses: openshield-dev/sandcastle@v1
   with:
     profile: develop
     command: npm run build
@@ -33,7 +33,7 @@ enforcing security standards in pull request checks:
 
 ```yaml
 - name: Run with risk threshold
-  uses: openshield/sandcastle@v1
+  uses: openshield-dev/sandcastle@v1
   with:
     profile: claude-code
     command: claude --task "Add unit tests for utils"
@@ -50,7 +50,7 @@ This is useful when evaluating a new profile before switching to enforcement:
 
 ```yaml
 - name: Run in audit mode
-  uses: openshield/sandcastle@v1
+  uses: openshield-dev/sandcastle@v1
   with:
     profile: build
     command: make release
@@ -76,14 +76,14 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build in sandbox
-        uses: openshield/sandcastle@v1
+        uses: openshield-dev/sandcastle@v1
         with:
           profile: build
           command: cargo build --release
           max-risk-score: '3'
 
       - name: Test in sandbox
-        uses: openshield/sandcastle@v1
+        uses: openshield-dev/sandcastle@v1
         with:
           profile: develop
           command: cargo test

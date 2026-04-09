@@ -293,15 +293,9 @@ interactive: false        # set true to prompt on unknown resource access
 
 ## Part of OpenShield
 
-SandCastle is part of the **OpenShield** ecosystem — open-source infrastructure for running AI agents safely.
+SandCastle is the first project in the **OpenShield** initiative — open-source infrastructure for running AI agents safely.
 
-| Project | Purpose |
-|---|---|
-| **SandCastle** | OS-level sandbox for local AI agents |
-| **PipeLocal** | Secure inter-process communication for agent pipelines |
-| **AgentGuard** | Runtime behavior monitoring and anomaly detection |
-| **AIScan** | Static analysis for agent code and prompts |
-| **SkillForge** | Verified skill registry with sandboxed execution |
+Follow [@openshield-dev](https://github.com/openshield-dev) for future projects in the ecosystem.
 
 ---
 
@@ -310,7 +304,7 @@ SandCastle is part of the **OpenShield** ecosystem — open-source infrastructur
 Contributions are welcome. Please open an issue before starting work on a large change so we can discuss the approach.
 
 ```bash
-git clone https://github.com/openshield/sandcastle
+git clone https://github.com/openshield-dev/sandcastle
 cd sandcastle
 cargo build
 cargo test

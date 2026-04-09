@@ -2,6 +2,8 @@
 name = "sandcastle-snapshot"
 version = "0.1.0"
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Sandbox state snapshot, restore, and checkpoint management for SandCastle"
 
 [dependencies]

@@ -2,6 +2,8 @@
 name = "sandcastle-audit"
 version = "0.1.0"
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Structured audit logging and event recording for all SandCastle sandbox operations"
 
 [dependencies]
