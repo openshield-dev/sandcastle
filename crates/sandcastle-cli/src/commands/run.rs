@@ -149,14 +149,27 @@ pub fn execute(
         super::validate::validate_allow_domain(domain)?;
     }
 
-    // 1. Resolve profile using the policy resolver.
+    // 1. Resolve profile — auto-detect from command if using default profile.
     let resolver = ProfileResolver::new(vec![
         std::env::current_dir().context("Failed to determine current directory")?,
     ]);
 
+    let effective_profile = if profile == "develop" {
+        // Try to auto-detect a better profile from the command being run.
+        if let Some(detected) = ProfileResolver::auto_detect(&command.join(" ")) {
+            let name = detected.name().to_string();
+            eprintln!("sandcastle: auto-detected profile '{name}' for command");
+            name
+        } else {
+            profile.to_string()
+        }
+    } else {
+        profile.to_string()
+    };
+
     let mut sandbox_profile = resolver
-        .resolve(profile)
-        .with_context(|| format!("Unknown profile '{}'. Run `sandcastle profiles list` to see available profiles.", profile))?;
+        .resolve(&effective_profile)
+        .with_context(|| format!("Unknown profile '{}'. Run `sandcastle profiles list` to see available profiles.", effective_profile))?;
 
     // Check that --allow-dir entries don't conflict with the profile's deny list.
     let fs_deny = &sandbox_profile.permissions.filesystem.deny;
@@ -249,15 +262,90 @@ pub fn execute(
     sandbox.start().context("Failed to start sandboxed process")?;
 
     // 7. Wait and report exit status.
+    let start_time = std::time::Instant::now();
     let status = sandbox.wait().context("Failed to wait for sandboxed process")?;
+    let duration = start_time.elapsed();
 
-    if status.success() {
-        println!("sandcastle: process exited successfully");
-    } else {
+    // 8. Post-run report: risk score + change summary + tips.
+    print_run_report(&audit_dir, duration, status.success());
+
+    if !status.success() {
         let code = status.code().unwrap_or(-1);
         eprintln!("sandcastle: process exited with code {code}");
         std::process::exit(code);
     }
 
     Ok(())
+}
+
+/// Print a polished post-run report with risk scoring, change summary, and tips.
+fn print_run_report(audit_dir: &std::path::Path, duration: std::time::Duration, success: bool) {
+    let audit_path = audit_dir.join("audit.log");
+    let status_icon = if success { "\u{2713}" } else { "\u{2717}" }; // ✓ or ✗
+
+    // Parse audit events for risk scoring.
+    let events = match std::fs::read_to_string(&audit_path) {
+        Ok(raw) => raw
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .filter_map(|l| serde_json::from_str::<sandcastle_audit::AuditEvent>(l).ok())
+            .collect::<Vec<_>>(),
+        Err(_) => vec![],
+    };
+
+    let total = events.len();
+    let blocked = events.iter().filter(|e| e.is_violation()).count();
+    let fs_ops = events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.event_type,
+                sandcastle_audit::event::EventType::FilesystemRead
+                    | sandcastle_audit::event::EventType::FilesystemWrite
+                    | sandcastle_audit::event::EventType::FilesystemCreate
+                    | sandcastle_audit::event::EventType::FilesystemDelete
+            )
+        })
+        .count();
+    let net_ops = events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.event_type,
+                sandcastle_audit::event::EventType::NetworkConnect
+                    | sandcastle_audit::event::EventType::NetworkRequest
+            )
+        })
+        .count();
+
+    // Risk score.
+    let risk = sandcastle_audit::risk::RiskReport::from_events(&events);
+    let risk_icon = match risk.level {
+        sandcastle_audit::risk::RiskLevel::Safe => "\u{1f7e2}",      // green circle
+        sandcastle_audit::risk::RiskLevel::Low => "\u{1f7e2}",       // green
+        sandcastle_audit::risk::RiskLevel::Medium => "\u{1f7e1}",    // yellow
+        sandcastle_audit::risk::RiskLevel::High => "\u{1f7e0}",      // orange
+        sandcastle_audit::risk::RiskLevel::Critical => "\u{1f534}",  // red
+    };
+
+    let dur_str = if duration.as_secs() >= 60 {
+        format!("{}m {}s", duration.as_secs() / 60, duration.as_secs() % 60)
+    } else {
+        format!("{:.1}s", duration.as_secs_f64())
+    };
+
+    println!();
+    println!("  {status_icon} sandcastle: process exited {}", if success { "successfully" } else { "with errors" });
+    println!("  {risk_icon} Risk: {}/10 ({:?}) — {}", risk.score, risk.level, risk.summary);
+    println!("    Duration: {dur_str}  Events: {total}  Blocked: {blocked}  FS: {fs_ops}  Net: {net_ops}");
+
+    if blocked > 0 {
+        println!("    {} operation(s) were blocked by policy", blocked);
+    }
+
+    println!();
+    println!("  Tip: `sandcastle diff`    — see what changed");
+    println!("       `sandcastle undo`    — rollback to pre-run state");
+    println!("       `sandcastle monitor` — live activity dashboard");
+    println!();
 }

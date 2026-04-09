@@ -1,6 +1,7 @@
 pub mod audit;
 pub mod compare;
 pub mod diff;
+pub mod init;
 pub mod monitor;
 pub mod policy;
 pub mod profiles;

@@ -93,6 +93,13 @@ enum Commands {
         action: ProfileCommands,
     },
 
+    /// Initialize a sandcastle.yaml in the current directory
+    Init {
+        /// Base profile to use
+        #[arg(long)]
+        profile: Option<String>,
+    },
+
     /// Live monitoring dashboard for sandbox activity
     Monitor {
         /// Path to audit log file
@@ -325,6 +332,10 @@ fn main() -> anyhow::Result<()> {
 
         Commands::Monitor { file } => {
             commands::monitor::execute(file.as_deref())?;
+        }
+
+        Commands::Init { profile } => {
+            commands::init::execute(profile.as_deref())?;
         }
 
         Commands::Diff { file, snapshot } => {

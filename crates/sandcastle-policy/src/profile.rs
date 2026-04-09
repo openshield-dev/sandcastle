@@ -70,6 +70,18 @@ pub enum BuiltinProfile {
 }
 
 impl BuiltinProfile {
+    /// Returns the canonical name string for this profile.
+    pub fn name(&self) -> &str {
+        match self {
+            Self::ClaudeCode => "claude-code",
+            Self::Codex => "codex",
+            Self::LangChain => "langchain",
+            Self::Ollama => "ollama",
+            Self::OpenClaw => "openclaw",
+            Self::Custom(name) => name,
+        }
+    }
+
     /// Returns a [`SandboxProfile`] with tuned defaults for each known agent.
     pub fn to_profile(&self) -> SandboxProfile {
         match self {
