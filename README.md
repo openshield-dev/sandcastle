@@ -19,8 +19,7 @@ cargo install sandcastle
 sandcastle run --profile claude-code -- claude
 ```
 
-<!-- TODO: Replace with an asciinema recording or GIF showing sandcastle in action -->
-<!-- <p align="center"><img src="docs/demo.gif" width="600" alt="SandCastle demo"></p> -->
+<p align="center"><img src="docs/demo.gif" width="700" alt="SandCastle demo — sandbox your AI agent in 10 seconds"></p>
 
 ---
 
