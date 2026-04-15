@@ -8,7 +8,7 @@ If you discover a security vulnerability in SandCastle, please report it respons
 
 ### How to Report
 
-Email: security@openshield.dev
+Email: monadsupreme@gmail.com
 
 Include:
 - Description of the vulnerability
