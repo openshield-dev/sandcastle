@@ -24,7 +24,8 @@ jobs:
           URL=$(curl -sSL https://api.github.com/repos/charmbracelet/vhs/releases/latest \
             | grep -oE '"browser_download_url":\s*"[^"]*Linux_x86_64\.tar\.gz"' \
             | head -1 | cut -d'"' -f4)
-          curl -sSL "$URL" | sudo tar xz -C /usr/local/bin vhs
+          cd /tmp && curl -sSL "$URL" | tar -xz --strip-components=1
+          sudo mv /tmp/vhs /usr/local/bin/vhs
 
       - name: Build sandcastle
         run: cargo build --release -p sandcastle-cli
