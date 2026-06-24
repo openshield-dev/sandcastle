@@ -17,8 +17,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install VHS
+      - name: Install VHS + run demo
         uses: charmbracelet/vhs-action@v1
+        with:
+          path: demo.tape
 
       - name: Install gifsicle
         run: sudo apt-get update && sudo apt-get install -y gifsicle
@@ -26,11 +28,8 @@ jobs:
       - name: Build sandcastle
         run: cargo build --release -p sandcastle-cli
 
-      - name: Run VHS
-        run: vhs demo.tape
-
       - name: Compress GIF
-        run: gifsicle -O3 demo.gif -o demo.gif
+        run: gifsicle -O3 docs/demo.gif -o docs/demo.gif
 
       - uses: stefanzweifel/git-auto-commit-action@v5
         with:
