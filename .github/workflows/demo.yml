@@ -21,7 +21,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg gifsicle
-          curl -sSL https://github.com/charmbracelet/vhs/releases/latest/download/vhs_Linux_x86_64.tar.gz | sudo tar xz -C /usr/local/bin vhs
+          URL=$(curl -sSL https://api.github.com/repos/charmbracelet/vhs/releases/latest \
+            | grep -oE '"browser_download_url":\s*"[^"]*Linux_x86_64\.tar\.gz"' \
+            | head -1 | cut -d'"' -f4)
+          curl -sSL "$URL" | sudo tar xz -C /usr/local/bin vhs
 
       - name: Build sandcastle
         run: cargo build --release -p sandcastle-cli
