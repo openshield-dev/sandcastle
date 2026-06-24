@@ -1,0 +1,38 @@
+name: Regenerate demo
+
+on:
+  push:
+    paths:
+      - 'demo.tape'
+      - 'crates/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  vhs:
+    name: Record demo.gif
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install VHS
+        uses: charmbracelet/vhs-action@v1
+
+      - name: Install gifsicle
+        run: sudo apt-get update && sudo apt-get install -y gifsicle
+
+      - name: Build sandcastle
+        run: cargo build --release -p sandcastle-cli
+
+      - name: Run VHS
+        run: vhs demo.tape
+
+      - name: Compress GIF
+        run: gifsicle -O3 demo.gif -o demo.gif
+
+      - uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: 'chore(demo): regenerate demo.gif'
+          file_pattern: '*.gif'
