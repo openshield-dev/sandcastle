@@ -17,16 +17,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install VHS + run demo
-        uses: charmbracelet/vhs-action@v1
-        with:
-          path: demo.tape
-
-      - name: Install gifsicle
-        run: sudo apt-get update && sudo apt-get install -y gifsicle
+      - name: Install ffmpeg, gifsicle, vhs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg gifsicle
+          curl -sSL https://github.com/charmbracelet/vhs/releases/latest/download/vhs_Linux_x86_64.tar.gz | sudo tar xz -C /usr/local/bin vhs
 
       - name: Build sandcastle
         run: cargo build --release -p sandcastle-cli
+
+      - name: Run VHS
+        run: vhs demo.tape
 
       - name: Compress GIF
         run: gifsicle -O3 docs/demo.gif -o docs/demo.gif
