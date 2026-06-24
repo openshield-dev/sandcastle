@@ -325,9 +325,6 @@ fn apply_landlock(profile: &SandboxProfile) -> Result<(), PlatformError> {
         RulesetStatus::NotEnforced => {
             warn!("landlock: filesystem isolation NOT enforced (kernel does not support Landlock — requires >= 5.13)");
         }
-        _ => {
-            warn!("landlock: unknown enforcement status");
-        }
     }
 
     Ok(())
