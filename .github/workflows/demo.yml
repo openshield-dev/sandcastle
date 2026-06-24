@@ -19,9 +19,6 @@ jobs:
 
       - name: Install VHS
         uses: charmbracelet/vhs-action@v1
-        with:
-          tape: demo.tape
-          output: demo.gif
 
       - name: Install gifsicle
         run: sudo apt-get update && sudo apt-get install -y gifsicle
