@@ -1,8 +1,12 @@
 //! Linux sandbox implementation using kernel namespaces, Landlock LSM,
 //! seccomp-BPF syscall filtering, and cgroup-v2 resource controls.
 //!
+//! `unsafe` is required for `pre_exec` (setresuid/setresgid/unshare before exec).
+//! The crate-level `#![deny(unsafe_code)]` is lifted for this module only.
+//!
 //! # Security architecture
 //!
+#![allow(unsafe_code)]
 //! A Linux sandbox combines several independent kernel mechanisms to build
 //! defence-in-depth.  No single layer is sufficient on its own, so all four
 //! are applied together:
